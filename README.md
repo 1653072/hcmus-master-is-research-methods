@@ -20,6 +20,7 @@
 
     - Track: `git lfs track "*.pt"`
     - Untrack: `git lfs untrack "*.pt"`
+    - Notice: All tracked LFS files will be stored at this path: `.git/lfs/objects`
 
 4. Pull latest LFS changes:
 
