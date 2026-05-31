@@ -24,3 +24,12 @@
 4. Pull latest LFS changes:
 
     - Command: `git lfs fetch --all && git lfs pull`
+
+5. De-duplicate LFS files to save disk:
+
+    - Command: `git lfs dedup`
+
+6. Check reference links and environment of LFS files:
+
+    - Comman: `git lfs env`
+
