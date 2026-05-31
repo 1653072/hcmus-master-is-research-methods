@@ -23,4 +23,4 @@
 
 4. Pull latest LFS changes:
 
-    - Command: `git lfs pull`
+    - Command: `git lfs fetch --all && git lfs pull`
