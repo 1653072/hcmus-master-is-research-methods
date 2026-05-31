@@ -1,0 +1,14 @@
+{
+  "DATA_ROOT": "Dataset",
+  "IMAGE_DIR": "Dataset\\fashion_item_images",
+  "IMAGE_BACKBONE": "resnet50",
+  "TEXT_MODEL_NAME": "bert-base-chinese",
+  "EMBED_DIM": 128,
+  "EPOCHS": 30,
+  "LR": 0.0001,
+  "WEIGHT_DECAY": 1e-05,
+  "LAMBDA_COMP": 0.1,
+  "BATCH_SIZE": 512,
+  "VAL_RATIO": 0.1,
+  "device_used": "cpu"
+}
