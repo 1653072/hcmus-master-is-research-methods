@@ -220,4 +220,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# VENV folders
 venv_hfgat/
+hfgat_rewrite_validate/venv_hfgat/
