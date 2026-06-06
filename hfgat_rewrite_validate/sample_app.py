@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict, List, Optional, Set, Tuple
 from PIL import Image
 import torch
 import pandas as pd
@@ -8,12 +8,24 @@ import streamlit as st
 import torch.nn as nn
 import torch.nn.functional as F
 
+from app_portability import (
+    build_paths,
+    compatibility_probability,
+    infer_compat_head,
+    is_git_lfs_pointer_file,
+    normalize_item_image_filename,
+)
+
 
 # =========================
 # CONFIG
 # =========================
-ARTIFACT_DIR = Path("output_hfgat_notebook")
-EXPORT_DIR = ARTIFACT_DIR / "exported_embeddings"
+PATHS = build_paths(Path(__file__).parent)
+ARTIFACT_DIR = PATHS.artifact_dir
+EXPORT_DIR = PATHS.export_dir
+IMAGE_DIR = PATHS.image_dir
+MAX_ID_CHARS = 256
+MAX_COMPAT_ITEMS = 8
 
 
 # =========================
@@ -36,7 +48,19 @@ class MLPBlock(nn.Module):
 
 
 class HFGATDetailed(nn.Module):
-    def __init__(self, image_dim, text_dim, cat_dim, num_users, num_outfits, num_items, embed_dim=128, dropout=0.1):
+    def __init__(
+        self,
+        image_dim,
+        text_dim,
+        cat_dim,
+        num_users,
+        num_outfits,
+        num_items,
+        embed_dim=128,
+        dropout=0.1,
+        compat_outputs=1,
+        compat_with_layer_norm=False,
+    ):
         super().__init__()
         self.image_proj = nn.Linear(image_dim, embed_dim)
         self.text_proj = nn.Linear(text_dim, embed_dim)
@@ -51,12 +75,14 @@ class HFGATDetailed(nn.Module):
         self.outfit_base = nn.Embedding(num_outfits, embed_dim)
         self.dropout = nn.Dropout(dropout)
 
-        # PHẢI trùng tên với checkpoint đã train
-        self.compat_mlp = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim),
+        compat_layers = [nn.Linear(embed_dim, embed_dim)]
+        if compat_with_layer_norm:
+            compat_layers.append(nn.LayerNorm(embed_dim))
+        compat_layers.extend([
             nn.ReLU(),
-            nn.Linear(embed_dim, 1),
-        )
+            nn.Linear(embed_dim, compat_outputs),
+        ])
+        self.compat_mlp = nn.Sequential(*compat_layers)
 
     def encode_items(self, image_x, text_x, cat_x, A_item_item):
         xi = F.normalize(self.image_proj(image_x), p=2, dim=-1)
@@ -107,8 +133,9 @@ def load_artifacts():
     if not model_path.exists():
         raise FileNotFoundError(f"Khong thay {model_path}. Ban can train xong truoc.")
 
-    ckpt = torch.load(model_path, map_location="cpu", weights_only=False)
+    ckpt = load_torch_artifact(model_path)
     cfg = ckpt["config"]
+    compat_with_layer_norm, compat_outputs = infer_compat_head(ckpt["model_state_dict"])
 
     model = HFGATDetailed(
         image_dim=cfg["image_dim"],
@@ -119,13 +146,18 @@ def load_artifacts():
         num_items=cfg["num_items"],
         embed_dim=cfg["embed_dim"],
         dropout=cfg["dropout"],
+        compat_outputs=compat_outputs,
+        compat_with_layer_norm=compat_with_layer_norm,
     )
-    model.load_state_dict(ckpt["model_state_dict"])
+    # The notebook checkpoint can include training-only heads such as scorer
+    # or attention blocks. The demo uses exported embeddings for retrieval and
+    # only needs the shared compatibility head loaded here.
+    model.load_state_dict(ckpt["model_state_dict"], strict=False)
     model.eval()
 
-    user_emb = torch.load(EXPORT_DIR / "user_embeddings.pt", map_location="cpu", weights_only=False)
-    outfit_emb = torch.load(EXPORT_DIR / "outfit_embeddings.pt", map_location="cpu", weights_only=False)
-    item_emb = torch.load(EXPORT_DIR / "item_embeddings.pt", map_location="cpu", weights_only=False)
+    user_emb = load_torch_artifact(EXPORT_DIR / "user_embeddings.pt")
+    outfit_emb = load_torch_artifact(EXPORT_DIR / "outfit_embeddings.pt")
+    item_emb = load_torch_artifact(EXPORT_DIR / "item_embeddings.pt")
 
     user2idx = json.loads((EXPORT_DIR / "user2idx.json").read_text(encoding="utf-8"))
     outfit2idx = json.loads((EXPORT_DIR / "outfit2idx.json").read_text(encoding="utf-8"))
@@ -170,35 +202,60 @@ def load_artifacts():
 # =========================
 # FUNCTIONS
 # =========================
-def render_outfit_items_small(outfit_id: str, bundle: Dict, max_items: int = 5, img_width: int = 70):
-    item_ids = bundle["outfit_items"].get(outfit_id, [])[:max_items]
+def load_torch_artifact(path: Path):
+    if not path.exists():
+        raise FileNotFoundError(f"Khong thay artifact {path}. Ban can train/export hoac tai artifact truoc.")
+    if is_git_lfs_pointer_file(path):
+        raise RuntimeError(
+            f"{path} van la Git LFS pointer file. Hay chay `git lfs pull` trong repo roi mo lai app."
+        )
+    return torch.load(path, map_location="cpu", weights_only=False)
 
-    if not item_ids:
-        st.caption("No items")
-        return
+def normalize_input_id(value: str, *, label: str) -> Tuple[Optional[str], Optional[str]]:
+    cleaned = (value or "").strip()
+    if not cleaned:
+        return None, f"{label} khong duoc de trong."
+    if len(cleaned) > MAX_ID_CHARS:
+        return None, f"{label} qua dai; toi da {MAX_ID_CHARS} ky tu."
+    if any(ch in cleaned for ch in "\r\n\t\0"):
+        return None, f"{label} khong hop le."
+    return cleaned, None
 
-    cols = st.columns(len(item_ids))
-    for col, item_id in zip(cols, item_ids):
-        img_path = find_item_image(item_id)
-        with col:
-            if img_path is not None:
-                st.image(str(img_path), width=img_width)
-            else:
-                st.write("No image")
-            st.caption(item_id)
+def parse_item_ids(text: str) -> Tuple[List[str], Optional[str]]:
+    if len(text or "") > 4096:
+        return [], "Danh sach item qua dai; vui long nhap ngan hon."
+
+    item_ids = []
+    seen = set()
+    for raw in (text or "").replace("\n", ",").split(","):
+        item_id, error = normalize_input_id(raw, label="item_id")
+        if error:
+            if raw.strip():
+                return [], error
+            continue
+        if item_id not in seen:
+            seen.add(item_id)
+            item_ids.append(item_id)
+        if len(item_ids) >= MAX_COMPAT_ITEMS:
+            break
+    return item_ids, None
+
+def safe_image_path(item_id: str, ext: str) -> Optional[Path]:
+    try:
+        candidate_name = normalize_item_image_filename(item_id, ext)
+    except ValueError:
+        return None
+    image_root = IMAGE_DIR.resolve()
+    candidate = (image_root / candidate_name).resolve()
+    if image_root == candidate or image_root not in candidate.parents:
+        return None
+    return candidate
 
 def find_item_image(item_id: str):
-    image_dir = Path("Dataset") / "fashion_item_images"
     for ext in [".png", ".jpg", ".jpeg", ".webp"]:
-        p = image_dir / f"{item_id}{ext}"
-        if p.exists():
-            return p
-    return None
-
-def find_item_image(item_id: str):
-    image_dir = Path("Dataset") / "fashion_item_images"
-    for ext in [".png", ".jpg", ".jpeg", ".webp"]:
-        p = image_dir / f"{item_id}{ext}"
+        p = safe_image_path(item_id, ext)
+        if p is None:
+            continue
         if p.exists():
             return p
     return None
@@ -240,6 +297,19 @@ def render_outfit_items(outfit_id: str, bundle: Dict, max_items: int = 6):
                 st.write("No image")
             st.caption(item_id)
 
+def known_outfit_indices_for_user(user_id: str, bundle: Dict) -> Set[int]:
+    history_df = bundle["history_df"]
+    if history_df.empty or not {"user_id", "outfit_id"}.issubset(history_df.columns):
+        return set()
+
+    rows = history_df[history_df["user_id"].astype(str) == user_id]
+    outfit_ids = rows["outfit_id"].astype(str)
+    return {
+        bundle["outfit2idx"][outfit_id]
+        for outfit_id in outfit_ids
+        if outfit_id in bundle["outfit2idx"]
+    }
+
 def topk_user_outfits(user_id: str, bundle: Dict, k: int = 10):
     if user_id not in bundle["user2idx"]:
         return None
@@ -247,10 +317,16 @@ def topk_user_outfits(user_id: str, bundle: Dict, k: int = 10):
     uidx = bundle["user2idx"][user_id]
     user_vec = bundle["user_emb"][uidx:uidx + 1]
     scores = torch.matmul(user_vec, bundle["outfit_emb"].T).squeeze(0)
+    known_indices = known_outfit_indices_for_user(user_id, bundle)
+    if known_indices:
+        scores[list(known_indices)] = -1e9
 
-    vals, idxs = torch.topk(scores, k=min(k, scores.numel()))
+    topk = min(max(1, k), max(1, scores.numel() - len(known_indices)))
+    vals, idxs = torch.topk(scores, k=topk)
     rows = []
     for score, oidx in zip(vals.tolist(), idxs.tolist()):
+        if oidx in known_indices:
+            continue
         oid = bundle["idx2outfit"][oidx]
         rows.append({
             "rank": len(rows) + 1,
@@ -284,7 +360,7 @@ def similar_outfits(outfit_id: str, bundle: Dict, k: int = 10):
 
 
 def compatibility_score(item_ids: List[str], bundle: Dict):
-    valid = [bundle["item2idx"][x] for x in item_ids if x in bundle["item2idx"]]
+    valid = [bundle["item2idx"][x] for x in item_ids[:MAX_COMPAT_ITEMS] if x in bundle["item2idx"]]
     if not valid:
         return None, []
 
@@ -294,9 +370,10 @@ def compatibility_score(item_ids: List[str], bundle: Dict):
 
     x = torch.tensor([padded], dtype=torch.long)
     with torch.no_grad():
-        score = bundle["model"].score_compatibility(bundle["item_emb"], x).item()
+        logits = bundle["model"].score_compatibility(bundle["item_emb"], x)
 
-    prob = 1 / (1 + torch.exp(torch.tensor(-score))).item()
+    score = float(logits.detach().cpu().reshape(-1).mean().item())
+    prob = compatibility_probability(logits)
     label = "Hop" if prob >= 0.5 else "Chua hop"
 
     return {
@@ -326,17 +403,24 @@ tab1, tab2, tab3 = st.tabs([
 ])
 with tab1:
     st.subheader("User recommendation")
-    user_id = st.text_input("Nhap user_id")
+    user_id = st.text_input("Nhap user_id", max_chars=MAX_ID_CHARS)
 
     if st.button("Recommend outfit"):
+        query_user_id, input_error = normalize_input_id(user_id, label="user_id")
+        if input_error:
+            st.warning(input_error)
+            st.stop()
+
         history_df = bundle["history_df"]
-        user_history = history_df[history_df["user_id"].astype(str) == user_id.strip()]
+        user_history = history_df[history_df["user_id"].astype(str) == query_user_id]
 
         st.markdown("### Top 10 outfit recommend")
-        df = topk_user_outfits(user_id.strip(), bundle, k=10)
+        df = topk_user_outfits(query_user_id, bundle, k=10)
 
         if df is None:
             st.warning("user_id khong ton tai trong tap train/export.")
+        elif len(df) == 0:
+            st.info("Khong tim thay outfit moi sau khi an cac interaction da train.")
         else:
             # header
             h1, h2, h3, h4 = st.columns([1, 2, 2, 6])
@@ -376,11 +460,16 @@ with tab2:
     st.subheader("Cham diem compatibility cho mot nhom item")
     item_text = st.text_area(
         "Nhap item_id, phan tach bang dau phay",
-        placeholder="VD: 1001,1002,1003"
+        placeholder="VD: 1001,1002,1003",
+        max_chars=4096,
     )
 
     if st.button("Check compatibility"):
-        item_ids = [x.strip() for x in item_text.split(",") if x.strip()]
+        item_ids, input_error = parse_item_ids(item_text)
+        if input_error:
+            st.warning(input_error)
+            st.stop()
+
         result, valid_items = compatibility_score(item_ids, bundle)
 
         if result is None:
@@ -404,10 +493,13 @@ with tab2:
 
 with tab3:
     st.subheader("Tim outfit tuong tu")
-    outfit_id = st.text_input("Nhap outfit_id", placeholder="VD: o456")
+    outfit_id = st.text_input("Nhap outfit_id", placeholder="VD: o456", max_chars=MAX_ID_CHARS)
 
     if st.button("Find similar outfit"):
-        query_id = outfit_id.strip()
+        query_id, input_error = normalize_input_id(outfit_id, label="outfit_id")
+        if input_error:
+            st.warning(input_error)
+            st.stop()
 
         if query_id not in bundle["outfit2idx"]:
             st.warning("outfit_id khong ton tai trong tap train/export.")

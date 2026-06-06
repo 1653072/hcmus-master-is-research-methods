@@ -1,66 +1,98 @@
-# H-FGAT rewrite for a 16GB machine
+# H-FGAT Rewrite Validate
 
-Mục tiêu của bản rewrite này:
-- Giữ pipeline gốc của tác giả: multimodal item embedding -> hierarchical graph -> joint recommendation + compatibility.
-- Subsample khoảng 30k user trước, rồi chỉ giữ outfit và item thực sự liên quan.
-- Chỉ embed ảnh có trong tập subsample, với tên file ảnh là `item_id.png`.
-- Code gọn hơn, tách module rõ ràng, train xong sinh ra `model.pt` hoàn chỉnh để dùng cho app demo.
+This folder contains a single-notebook H-FGAT rewrite plus a Streamlit demo app.
 
-## Cấu trúc
-- `hfgat/config.py`: config tập trung.
-- `hfgat/data.py`: load data, subsample, build graph, dataset.
-- `hfgat/features.py`: trích xuất image/text feature và tạo item init embedding.
-- `hfgat/model.py`: H-HFGAT model.
-- `hfgat/train.py`: train + evaluate + save `model.pt`.
-- `hfgat/infer.py`: ví dụ load model và recommend.
+## Files
 
-## Cài đặt
-```bash
-pip install torch torchvision torch-geometric torch-scatter pandas numpy pillow transformers
+- `hfgat_runall_rewrite_validate_fixed.ipynb`: run-all training/export notebook.
+- `sample_app.py`: Streamlit demo for user recommendation, outfit compatibility, and similar outfit lookup.
+- `app_portability.py`: shared helpers for app-relative paths, device selection, and compatibility score handling.
+- `translate.ipynb`: utility notebook to translate item titles.
+- `Dataset/`: metadata files. Image files should be placed in `Dataset/fashion_item_images/`.
+- `output_hfgat_notebook/`: model outputs and exported embeddings.
+
+## Data layout
+
+```text
+Dataset/
+├── item_data.txt
+├── item_data_translated.csv
+├── outfit_data.txt
+├── user_data.txt
+├── train_uo.txt                 # optional
+└── fashion_item_images/
+    ├── <item_id>.png
+    ├── <item_id>.jpg
+    └── ...
 ```
 
-## Chạy train
+## Install
+
+From the repository root:
+
 ```bash
-python -m hfgat.train \
-  --data-root /path/to/authordata \
-  --image-dir fashion_item_images \
-  --work-dir /path/to/output_run \
-  --user-target 30000 \
-  --epochs 20 \
-  --device cuda
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+git lfs install
+git lfs pull
 ```
 
-Nếu máy yếu hơn, có thể chạy:
-```bash
-python -m hfgat.train \
-  --data-root /path/to/authordata \
-  --work-dir /path/to/output_run \
-  --user-target 20000 \
-  --epochs 10 \
-  --device cpu
+Windows PowerShell:
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+git lfs install
+git lfs pull
 ```
 
-## Output
-Sau khi train xong, thư mục `work-dir` sẽ có:
-- `model.pt`: checkpoint đầy đủ, đã chứa `state_dict`, config, mappings, graph tensors, history.
-- `training_history.json`
-- `test_report.json`
-- `sampled/item_data_sampled.csv`
-- `sampled/outfit_data_sampled.csv`
-- `sampled/user_data_sampled.csv`
-- `cache/image_features.npy`
-- `cache/text_features.npy`
+Use Python 3.10 or 3.11 locally when possible. Python 3.12 can work with recent PyTorch wheels, including current Colab runtimes, but Python 3.11 is usually the safer choice for Mac setup.
 
-## Inference demo
+Google Colab fresh runtime setup:
+
 ```bash
-python -m hfgat.infer \
-  --model-path /path/to/output_run/model.pt \
-  --user-id 12345 \
-  --topk 10
+!apt-get update -qq && apt-get install -y -qq git-lfs
+!git lfs install
+!git clone https://github.com/1653072/hcmus-master-is-research-methods.git
+%cd hcmus-master-is-research-methods
+!git checkout thienhuy
+!git lfs pull
+!python -m pip install -r requirements.txt
 ```
 
-## Ghi chú kỹ thuật
-- Mặc định dùng `resnet50` + `distilbert-base-uncased` để phù hợp máy 16GB RAM.
-- Nếu muốn sát paper hơn, đổi `--image-model resnet152`.
-- Nếu title không phải tiếng Anh, đổi text encoder sang model phù hợp hơn.
-- Negative sampling hiện tại dùng random outfit cho recommendation và thay một item khác category cho compatibility.
+After that, open `hfgat_rewrite_validate/hfgat_runall_rewrite_validate_fixed.ipynb` or run the notebook cells from the checked-out repo. If you are already inside the repo in Colab, only the final two commands are needed.
+
+## Run training/export
+
+Open `hfgat_runall_rewrite_validate_fixed.ipynb` and run from top to bottom. The notebook uses app-local relative paths:
+
+- `Dataset/`
+- `output_hfgat_notebook/`
+
+Device selection supports:
+
+- `DEVICE = "auto"`: prefer CUDA, then CPU. This is the safest training default because the notebook uses sparse tensors.
+- `DEVICE = "cuda"`: use CUDA if available, otherwise CPU.
+- `DEVICE = "mps"`: use Apple Silicon MPS if available, otherwise CPU. Use this only if your local PyTorch build supports the sparse operations used by the notebook. On MacBook Pro M1/M2/M3, sparse tensor operations may still fail on MPS; set `DEVICE = "cpu"` locally or use CUDA in Colab for training.
+- `DEVICE = "cpu"`: force CPU.
+
+## Run Streamlit demo
+
+From the repository root:
+
+```bash
+streamlit run hfgat_rewrite_validate/sample_app.py
+```
+
+The app resolves files relative to its own folder, so it does not depend on the current working directory.
+
+## Notes
+
+- If `.pt` files are tiny text files beginning with `version https://git-lfs.github.com/spec/v1`, run `git lfs pull`.
+- If `torch.load` fails with `invalid load key, 'v'` or an unpickling error, check the `.pt` file contents. That usually means Git LFS left a pointer file instead of downloading the real tensor/checkpoint.
+- If PyTorch install fails on Windows or CUDA machines, install the correct PyTorch build from https://pytorch.org/get-started/locally/, then rerun `python -m pip install -r requirements.txt`.
+- The Streamlit app can load checkpoints whose compatibility head returns either one logit or multiple view logits.
