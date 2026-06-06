@@ -74,6 +74,22 @@ For GPU-specific PyTorch builds, follow the selector at https://pytorch.org/get-
 
 Apple Silicon note for MacBook Pro M1/M2/M3: the Streamlit app can run on CPU or MPS, but the training notebook uses sparse tensor operations that may not be fully supported by PyTorch MPS. If you see an MPS sparse tensor error, set the notebook device to CPU locally, or use a CUDA GPU runtime in Google Colab for training.
 
+## Run model evaluation metrics
+
+Use this first when you only need model quality/accuracy metrics and do not want the Streamlit demo:
+
+```bash
+python hfgat_rewrite_validate/evaluate_model.py
+```
+
+Machine-readable output:
+
+```bash
+python hfgat_rewrite_validate/evaluate_model.py --json
+```
+
+The saved checkpoint currently reports recommendation metrics such as `NDCG@10`, `Recall@10`, `AUC`, and compatibility accuracy (`compat_acc`). For this recommender, `compat_acc` is the closest binary accuracy metric; ranking quality is better read from `NDCG@10`, `Recall@10`, and `AUC`.
+
 ## Run the demo app
 
 The app now resolves `Dataset/` and `output_hfgat_notebook/` relative to `sample_app.py`, so it can be launched from the repo root:

@@ -80,6 +80,22 @@ Device selection supports:
 - `DEVICE = "mps"`: use Apple Silicon MPS if available, otherwise CPU. Use this only if your local PyTorch build supports the sparse operations used by the notebook. On MacBook Pro M1/M2/M3, sparse tensor operations may still fail on MPS; set `DEVICE = "cpu"` locally or use CUDA in Colab for training.
 - `DEVICE = "cpu"`: force CPU.
 
+## Print model accuracy/metrics
+
+Run this before using the demo UI:
+
+```bash
+python hfgat_rewrite_validate/evaluate_model.py
+```
+
+From inside this folder:
+
+```bash
+python evaluate_model.py
+```
+
+The report prints the best saved validation epoch, compatibility accuracy (`compat_acc`), `AUC`, `Precision@10`, `HR@10`, `Recall@10`, `NDCG@10`, and `MRR@10`.
+
 ## Run Streamlit demo
 
 From the repository root:
