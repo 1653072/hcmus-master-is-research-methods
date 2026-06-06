@@ -223,3 +223,6 @@ __marimo__/
 # VENV folders
 venv_hfgat/
 hfgat_rewrite_validate/venv_hfgat/
+
+# Other folders/files
+hfgat_rewrite_validate/Dataset/fashion_item_images/

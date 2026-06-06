@@ -1,7 +1,7 @@
 {
-  "sampled_users": 25263,
-  "sampled_outfits": 6622,
-  "sampled_items": 14419,
-  "items_with_images": 14419,
+  "sampled_users": 11006,
+  "sampled_outfits": 5716,
+  "sampled_items": 12714,
+  "items_with_images": 12714,
   "train_uo_source": "derived from user_data.txt"
 }
