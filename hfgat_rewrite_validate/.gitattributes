@@ -1,3 +1,0 @@
-hfgat_rewrite_validate/hfgat_rewrite_validate/output_hfgat_notebook/cache_old1/item_features.pt filter=lfs diff=lfs merge=lfs -text
-hfgat_rewrite_validate/hfgat_rewrite_validate/output_hfgat_notebook/cache/item_features.pt filter=lfs diff=lfs merge=lfs -text
-hfgat_rewrite_validate/hfgat_rewrite_validate/output_hfgat_notebook/cache_old/item_features.pt filter=lfs diff=lfs merge=lfs -text
