@@ -1,18 +1,18 @@
 {
-  "all_edges": 70508,
-  "train_edges": 58920,
+  "all_edges": 679028,
+  "train_edges": 667440,
   "val_edges": 5794,
   "test_edges": 5794,
-  "train_ratio": 0.8356498553355648,
-  "val_ratio": 0.08217507233221762,
-  "test_ratio": 0.08217507233221762,
-  "train_users": 11006,
+  "train_ratio": 0.9829344298026002,
+  "val_ratio": 0.008532785098699907,
+  "test_ratio": 0.008532785098699907,
+  "train_users": 277469,
   "val_users": 5543,
   "test_users": 5543,
   "users_with_val": 5543,
   "users_with_test": 5543,
   "users_in_val_not_in_train": 0,
   "users_in_test_not_in_train": 0,
-  "compat_train_size": 4572,
-  "compat_val_size": 1144
+  "compat_train_size": 6948,
+  "compat_val_size": 1737
 }
