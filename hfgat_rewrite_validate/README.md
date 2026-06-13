@@ -70,10 +70,10 @@ As of **June 13, 2026**, `hfgat_runall_rewrite_validate_fixed.ipynb` incorporate
 | **Weight decay** | `WEIGHT_DECAY=1e-5` (was 1e-3) | Matches author; avoids crushing large embedding tables |
 | **Gradient clipping** | `clip_grad_norm_(max_norm=1.0)` | Stabilizes training with large ResNet152/BERT projections |
 | **L2 normalization** | `encode_items` output normalized | Consistent embedding scale across item/outfit/user layers |
-| **Per-epoch graph forward** | One full graph propagation per epoch | Faster training; more stable gradients vs per-batch forward |
+| **Graph forward** | **Per-batch** `forward_all_embeddings()` (Fix 10 reverted) | Correct mini-batch SGD; once/epoch + `retain_graph` breaks after `optimizer.step()` |
 | **Training negatives** | `NEG_PER_POS=5` (was 1) | Stronger BPR signal; closer to evaluation difficulty |
 
-For the full diff against the author's `fgat-session-3-train-model.ipynb`, see [`compare_team_and_author/analysis.md`](../compare_team_and_author/analysis.md).
+For the full diff against the author's `fgat-session-3-train-model.ipynb`, see [`compare_team_and_author/analysis.md`](../compare_team_and_author/analysis.md). For **Fix 10** (attempted per-epoch graph forward, why it failed, and future speed-up options), see the dedicated section in that analysis doc.
 
 ---
 
@@ -408,6 +408,85 @@ streamlit run sample_app.py
 - **Compatibility outfits**: 80% train / 20% val by outfit index
 - **User–outfit graph at train time**: built from **train edges only** (no val/test leakage)
 
+### Training loop design (mini-batch forward)
+
+The training cell calls `forward_all_embeddings(model)` **once per batch**, then `loss.backward()` and `optimizer.step()`. This is intentional and matches the author's per-batch `model(...)` pattern.
+
+**Why not pre-compute embeddings once per epoch?**  
+An optimization (Fix 10) tried one graph forward per epoch with `retain_graph=True` across batches. It failed on batch 2 with:
+
+```text
+RuntimeError: ... modified by an inplace operation ... expected version 1 instead
+```
+
+Cause: `optimizer.step()` updates weights after each batch, but autograd still holds the graph from the epoch-start forward. `retain_graph` does not make that safe across multiple step cycles.
+
+| Pattern | Works? | Notes |
+|---------|--------|-------|
+| Per-batch forward + step/batch | **Yes (current)** | Standard mini-batch SGD |
+| Once/epoch forward + retain_graph + step/batch | **No** | Graph stale after first `step()` |
+| Once/epoch forward + accumulate grads + step/epoch | Yes | Different semantics; future option |
+| Once/epoch forward + detached embeddings | Yes | Graph layers get no rec gradients |
+
+#### Future speed-up proposals (Options A / B / C)
+
+Not implemented in the current notebook. Full discussion and tuning notes: [`compare_team_and_author/analysis.md`](../compare_team_and_author/analysis.md) → Fix 10.
+
+**Option A — Gradient accumulation (one forward + one `step()` per epoch)**
+
+```python
+optimizer.zero_grad()
+user_emb, outfit_emb, item_emb = forward_all_embeddings(model)
+n_batches = len(train_loader)
+for batch_idx, batch in enumerate(train_loader):
+    # ... rec_loss, comp_loss (same as current notebook) ...
+    loss = (rec_loss + LAMBDA_COMP * comp_loss) / n_batches
+    loss.backward(retain_graph=(batch_idx < n_batches - 1))
+torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+optimizer.step()  # only once per epoch
+```
+
+**Option B — Chunked accumulation (forward every N batches)**
+
+```python
+RECOMPUTE_EVERY_N_BATCHES = 10
+chunk_loss_sum, chunk_count = 0.0, 0
+for batch_idx, batch in enumerate(train_loader):
+    if chunk_count == 0:
+        optimizer.zero_grad()
+        user_emb, outfit_emb, item_emb = forward_all_embeddings(model)
+    loss = rec_loss + LAMBDA_COMP * comp_loss
+    chunk_loss_sum += loss
+    chunk_count += 1
+    if chunk_count == RECOMPUTE_EVERY_N_BATCHES or batch_idx == len(train_loader) - 1:
+        (chunk_loss_sum / chunk_count).backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+        chunk_loss_sum, chunk_count = 0.0, 0
+```
+
+**Option C — Two-phase training (compatibility warmup, then joint or detached rec)**
+
+```python
+PHASE1_EPOCHS = 15
+PHASE2_DETACH_REC = False  # True = fast but graph gets no rec gradients
+
+compat_only = (epoch <= PHASE1_EPOCHS)
+if PHASE2_DETACH_REC and not compat_only:
+    with torch.no_grad():
+        user_emb, outfit_emb, item_emb = forward_all_embeddings(model)
+    user_emb, outfit_emb, item_emb = user_emb.detach(), outfit_emb.detach(), item_emb.detach()
+else:
+    user_emb, outfit_emb, item_emb = forward_all_embeddings(model)
+
+if compat_only:
+    loss = bpr_loss(pos_comp, neg_comp)
+else:
+    loss = rec_loss + LAMBDA_COMP * comp_loss
+```
+
+**Option D (engineering):** larger `BATCH_SIZE`, cache image/text projections, profile sparse ops on MPS.
+
 ---
 
 ## For Apple Silicon / high-memory users
@@ -416,7 +495,7 @@ streamlit run sample_app.py
 
 - Automatic MPS detection (Metal Performance Shaders)
 - Larger batch sizes (1024) and ResNet152 backbone
-- Per-epoch graph forward reduces redundant sparse operations vs per-batch forward
+- Per-batch graph forward (correct autograd); per-epoch caching was tried and reverted — see [Training loop design](#training-loop-design-mini-batch-forward)
 
 ### Recommended configuration (Cell 2)
 
@@ -476,7 +555,8 @@ git add .gitattributes
 | Low Precision@10 vs paper | Different eval protocol | Use `sampled_negatives=50`; see analysis doc |
 | `NaN in loss` | Gradient explosion | Gradient clipping is enabled (`max_norm=1.0`); try lower `LR` |
 | Training stops early | Early stopping triggered | Normal if NDCG@10 plateaus; check `best_model.pt` |
-| `verbose` scheduler warning | Older PyTorch | Safe to ignore or remove `verbose=True` from scheduler |
+| `retain_graph` / version mismatch on backward | Once/epoch forward + step/batch | Use per-batch `forward_all_embeddings()` (current default); see analysis Fix 10 |
+| `ReduceLROnPlateau` `verbose` TypeError | PyTorch 2.12+ removed `verbose` | Omit `verbose=True` from scheduler constructor |
 
 ---
 
@@ -490,4 +570,4 @@ git add .gitattributes
 
 ---
 
-**Last Updated**: June 13, 2026 | **License**: [See original repository]
+**Last Updated**: June 13, 2026 (includes Fix 10 graph-forward findings) | **License**: [See original repository]

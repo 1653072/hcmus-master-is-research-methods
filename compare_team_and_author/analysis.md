@@ -1,6 +1,6 @@
 # H-FGAT Code Comparison: Author vs. Team
 
-**Date:** 2026-06-13  
+**Date:** 2026-06-13 (updated with Fix 10 implementation findings)  
 **Author's code:** [GitHub - kimnguyen branch](https://github.com/1653072/hcmus-master-is-research-methods/tree/kimnguyen), file `fgat-session-3-train-model.ipynb`  
 **Team's code:** `hfgat_rewrite_validate/hfgat_runall_rewrite_validate_fixed.ipynb`  
 **Paper:** *Hybrid-hierarchical fashion graph attention network for compatibility-oriented and personalized outfit recommendation*
@@ -17,6 +17,8 @@ After a thorough line-by-line comparison, **the team's code differs from the aut
 4. The **evaluation protocol** uses different numbers of negative samples, inflating the author's metrics.
 5. The **data split strategy** produces a drastically smaller validation set in the team's code.
 6. The **author's notebook actually crashes** on epoch 1 validation with a TypeError, so the reported results were from a corrected run, not the code in the branch as-is.
+
+**Post-implementation note (Fix 10):** An attempted optimization — pre-computing graph embeddings once per epoch — was **reverted** after a runtime autograd failure. The current notebook uses **per-batch** `forward_all_embeddings()` with standard mini-batch SGD. See [Fix 10](#fix-10-medium-priority-graph-forward-frequency--reverted) for details and future options.
 
 ---
 
@@ -483,32 +485,254 @@ def encode_items(self, image_feat, text_feat, cat_feat, A_item):
     return F.normalize(x, p=2, dim=-1)  # add this line
 ```
 
-### Fix 10 (Medium Priority): Pre-compute full graph embeddings once per epoch, not once per batch
+### Fix 10 (Medium Priority): Graph forward frequency — **REVERTED**
 
-In the team's training loop, `model.forward()` (full graph propagation over all items, outfits, users) is called **once per batch**. With 652 batches per epoch, this means 652 full forward passes through the graph per epoch — both slow and a subtle source of overfitting because each batch's gradient nudges embeddings in slightly different directions.
+**Status:** Attempted in `hfgat_runall_rewrite_validate_fixed.ipynb`, then **reverted**. Current training uses **per-batch** graph forward (same as the author).
 
-The author also does this per-batch (which is itself a design limitation), but the team can improve by computing embeddings once per epoch:
+#### Original motivation
+
+In the team's training loop, `model.forward()` (full graph propagation over all items, outfits, users) is called **once per batch**. With ~100 batches per epoch (after the 80/10/10 split), that means ~100 full sparse-matrix propagations per epoch — expensive on MPS/CPU. Fix 10 proposed computing embeddings once per epoch to reduce redundant work.
+
+#### What was implemented (and failed)
 
 ```python
-# At the start of each epoch — compute embeddings once
-model.train()
-with torch.no_grad():
-    user_emb_epoch, outfit_emb_epoch, item_emb_epoch = model(...)
+# Once per epoch — single forward WITH gradients
+user_emb_epoch, outfit_emb_epoch, item_emb_epoch = forward_all_embeddings(model)
 
-# In the batch loop — only compute scores from cached embeddings
+for batch_idx, batch in enumerate(train_loader):
+    optimizer.zero_grad()
+    # Score from cached embeddings
+    pos_score = model.score_user_outfit(user_emb_epoch, outfit_emb_epoch, u_exp, pos_exp)
+    neg_score = model.score_user_outfit(user_emb_epoch, outfit_emb_epoch, u_exp, neg_flat)
+    loss = rec_loss + LAMBDA_COMP * comp_loss
+    loss.backward(retain_graph=(batch_idx < last))  # keep graph for next batch
+    optimizer.step()  # ← updates weights in-place after EVERY batch
+```
+
+#### Why it crashed (PyTorch autograd)
+
+After batch 1: `backward(retain_graph=True)` → `optimizer.step()` **mutates model parameters in place**.
+
+After batch 2: `backward()` on the **same** computation graph from the epoch-start forward fails because parameter tensor versions no longer match what autograd recorded:
+
+```
+RuntimeError: one of the variables needed for gradient computation has been
+modified by an inplace operation: [MPSFloatType [64, 64]] is at version 3;
+expected version 1 instead.
+```
+
+**Key insight:** `retain_graph=True` only keeps a graph alive for **another backward on the same forward**. It does **not** allow reusing one forward across multiple `backward()` + `optimizer.step()` cycles when weights change between batches.
+
+| Approach | `optimizer.step()` per batch? | Gradients to graph layers? | Works with standard mini-batch SGD? |
+| -------- | ----------------------------- | -------------------------- | ----------------------------------- |
+| Once/epoch forward + `retain_graph` + step/batch | Yes | Yes (in theory) | **No** — graph stale after first step |
+| Once/epoch forward + gradient accumulation + step/epoch | No (once at end) | Yes | Yes — different optimization semantics |
+| Once/epoch forward + `no_grad` (detached embeddings) | Yes | No for rec loss through graph | Yes — weaker / wrong training signal |
+| **Per-batch forward (current)** | Yes | Yes | **Yes** — correct mini-batch SGD |
+
+#### Current decision (kept for now)
+
+```python
 for batch in train_loader:
     optimizer.zero_grad()
-    u_idx = batch["user_idx"].to(device)
-    pos_idx = batch["pos_outfit_idx"].to(device)
-    neg_idx = batch["neg_outfit_idx"].to(device)
-    pos_score = model.score_user_outfit(user_emb_epoch, outfit_emb_epoch, u_idx, pos_idx)
-    neg_score = model.score_user_outfit(user_emb_epoch, outfit_emb_epoch, u_idx, neg_idx)
-    loss = bpr_loss(pos_score, neg_score)
-    loss.backward()
+    user_emb, outfit_emb, item_emb = forward_all_embeddings(model)  # fresh graph each batch
+    loss = rec_loss + LAMBDA_COMP * comp_loss
+    loss.backward()  # no retain_graph
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
     optimizer.step()
 ```
 
-Note: this changes the gradient flow (model parameters receive gradients only through the scorer, not through the graph propagation layers). A hybrid approach — re-compute graph embeddings every N batches — is a good middle ground.
+This matches the author's per-batch `model(...)` call and is the correct pattern for mini-batch learning with per-batch weight updates.
+
+#### Future options for next versions (if speed is still a bottleneck)
+
+Below are **code proposals** for the three main alternatives. They are not implemented in the current notebook; use them as starting points for the next version.
+
+---
+
+##### Option A — Gradient accumulation (one forward per epoch, one `step()` per epoch)
+
+**Idea:** Forward once with gradients, accumulate loss over all batches, call `optimizer.step()` only at epoch end. No weight update between batch backwards → graph stays valid.
+
+**Trade-off:** Equivalent to full-batch (or very large effective batch) gradient descent per epoch. May need lower `LR` or scaled LR vs per-batch SGD.
+
+```python
+# Config (add to Cell 2)
+ACCUMULATE_PER_EPOCH = True   # toggle Option A
+
+# Training loop replacement sketch
+for epoch in range(1, EPOCHS + 1):
+    model.train()
+    optimizer.zero_grad()
+
+    # Single forward for the whole epoch (graph built once)
+    user_emb, outfit_emb, item_emb = forward_all_embeddings(model)
+
+    n_batches = len(train_loader)
+    for batch_idx, batch in enumerate(train_loader):
+        user_idx = batch["user_idx"].to(device)
+        pos_idx  = batch["pos_outfit_idx"].to(device)
+        neg_idx  = batch["neg_outfit_idx"]
+        if isinstance(neg_idx, (list, tuple)):
+            neg_idx = torch.stack(neg_idx, dim=1)
+        neg_idx = neg_idx.to(device)
+
+        if neg_idx.dim() == 2:
+            u_exp    = user_idx.repeat_interleave(neg_idx.size(1))
+            pos_exp  = pos_idx.repeat_interleave(neg_idx.size(1))
+            neg_flat = neg_idx.reshape(-1)
+        else:
+            u_exp, pos_exp, neg_flat = user_idx, pos_idx, neg_idx
+
+        pos_score = model.score_user_outfit(user_emb, outfit_emb, u_exp, pos_exp)
+        neg_score = model.score_user_outfit(user_emb, outfit_emb, u_exp, neg_flat)
+        rec_loss  = bpr_loss(pos_score, neg_score)
+
+        pos_comp  = model.score_compatibility(item_emb, compat_pos_train_t)
+        neg_comp  = model.score_compatibility(item_emb, compat_neg_train_t)
+        comp_loss = bpr_loss(pos_comp, neg_comp)
+
+        loss = (rec_loss + LAMBDA_COMP * comp_loss) / n_batches  # scale for mean gradient
+        is_last = (batch_idx == n_batches - 1)
+        loss.backward(retain_graph=not is_last)  # OK: no step() until after loop
+
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    optimizer.step()  # single update per epoch
+```
+
+**Tuning notes:**
+- Try `LR * sqrt(n_batches)` or `LR / n_batches` vs current `LR=0.001`.
+- Compatibility loss runs on full `compat_pos_train_t` each batch (same as today); could move outside the batch loop once per epoch to save more time.
+
+---
+
+##### Option B — Chunked accumulation (recompute forward every N batches)
+
+**Idea:** Split the epoch into chunks of size `N`. Within each chunk: one forward, accumulate over N batches, one `step()`, then forward again. Reduces forwards from `~100/epoch` to `~100/N/epoch` while keeping smaller effective batch size than Option A.
+
+**Trade-off:** Middle ground between speed and mini-batch noise. Still not identical to per-batch SGD.
+
+```python
+# Config (add to Cell 2)
+RECOMPUTE_EVERY_N_BATCHES = 10   # e.g. 5, 10, 20
+
+for epoch in range(1, EPOCHS + 1):
+    model.train()
+    chunk_loss_sum = 0.0
+    chunk_count = 0
+
+    for batch_idx, batch in enumerate(train_loader):
+        if chunk_count == 0:
+            optimizer.zero_grad()
+            user_emb, outfit_emb, item_emb = forward_all_embeddings(model)
+
+        user_idx = batch["user_idx"].to(device)
+        pos_idx  = batch["pos_outfit_idx"].to(device)
+        neg_idx  = batch["neg_outfit_idx"]
+        if isinstance(neg_idx, (list, tuple)):
+            neg_idx = torch.stack(neg_idx, dim=1)
+        neg_idx = neg_idx.to(device)
+
+        if neg_idx.dim() == 2:
+            u_exp    = user_idx.repeat_interleave(neg_idx.size(1))
+            pos_exp  = pos_idx.repeat_interleave(neg_idx.size(1))
+            neg_flat = neg_idx.reshape(-1)
+        else:
+            u_exp, pos_exp, neg_flat = user_idx, pos_idx, neg_idx
+
+        pos_score = model.score_user_outfit(user_emb, outfit_emb, u_exp, pos_exp)
+        neg_score = model.score_user_outfit(user_emb, outfit_emb, u_exp, neg_flat)
+        rec_loss  = bpr_loss(pos_score, neg_score)
+
+        pos_comp  = model.score_compatibility(item_emb, compat_pos_train_t)
+        neg_comp  = model.score_compatibility(item_emb, compat_neg_train_t)
+        comp_loss = bpr_loss(pos_comp, neg_comp)
+
+        loss = rec_loss + LAMBDA_COMP * comp_loss
+        chunk_loss_sum += loss
+        chunk_count += 1
+
+        is_end_of_chunk = (
+            chunk_count == RECOMPUTE_EVERY_N_BATCHES
+            or batch_idx == len(train_loader) - 1
+        )
+        if is_end_of_chunk:
+            (chunk_loss_sum / chunk_count).backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            chunk_loss_sum = 0.0
+            chunk_count = 0
+```
+
+**Important:** Call `forward_all_embeddings()` only when `chunk_count == 0` (after the previous chunk's `step()`). Do **not** call `optimizer.step()` mid-chunk before the accumulated backward.
+
+---
+
+##### Option C — Two-phase training (compatibility first, then joint or detached rec)
+
+**Idea:** Phase 1 trains graph + compatibility head. Phase 2 adds recommendation — either jointly or with detached embeddings for a fast (but approximate) rec pass.
+
+**Trade-off:** Deviates from the paper's single-phase joint objective; requires ablation to validate metrics.
+
+```python
+# Config (add to Cell 2)
+PHASE1_EPOCHS = 15          # compatibility-only warmup
+PHASE2_DETACH_REC = False   # True = Option C-fast (no graph grad from rec); False = full joint
+
+for epoch in range(1, EPOCHS + 1):
+    model.train()
+    compat_only = (epoch <= PHASE1_EPOCHS)
+
+    for batch in train_loader:
+        optimizer.zero_grad()
+
+        if PHASE2_DETACH_REC and not compat_only:
+            # Fast path: graph forward without grad; only indexing/scoring trains rec path weakly
+            with torch.no_grad():
+                user_emb, outfit_emb, item_emb = forward_all_embeddings(model)
+            user_emb = user_emb.detach()
+            outfit_emb = outfit_emb.detach()
+            item_emb = item_emb.detach()
+        else:
+            user_emb, outfit_emb, item_emb = forward_all_embeddings(model)
+
+        # ... neg_idx / u_exp / pos_exp / neg_flat (same as current) ...
+
+        if compat_only:
+            pos_comp  = model.score_compatibility(item_emb, compat_pos_train_t)
+            neg_comp  = model.score_compatibility(item_emb, compat_neg_train_t)
+            loss = bpr_loss(pos_comp, neg_comp)
+        else:
+            pos_score = model.score_user_outfit(user_emb, outfit_emb, u_exp, pos_exp)
+            neg_score = model.score_user_outfit(user_emb, outfit_emb, u_exp, neg_flat)
+            rec_loss  = bpr_loss(pos_score, neg_score)
+
+            pos_comp  = model.score_compatibility(item_emb, compat_pos_train_t)
+            neg_comp  = model.score_compatibility(item_emb, compat_neg_train_t)
+            comp_loss = bpr_loss(pos_comp, neg_comp)
+
+            loss = rec_loss + LAMBDA_COMP * comp_loss
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+```
+
+**Phase schedule variants to try:**
+
+| Variant | Phase 1 | Phase 2 |
+|---------|---------|---------|
+| C1 (warmup) | `comp_loss` only, 10–20 epochs | Joint `rec + λ*comp` |
+| C2 (detach rec) | Joint training | `PHASE2_DETACH_REC=True` for speed experiment |
+| C3 (freeze head) | Joint | Freeze `compat_mlp`, fine-tune graph for rec only |
+
+---
+
+##### Option D — Engineering optimizations (no training-semantics change)
+
+- Larger `BATCH_SIZE` to reduce forwards per epoch.
+- Cache static feature projections; only re-run sparse graph layers.
+- Profile sparse `torch.sparse.mm` on MPS vs CPU fallback.
 
 ### Fix 11 (Medium Priority): Increase training negative samples per positive (NEG_PER_POS)
 
@@ -572,7 +796,7 @@ optimizer = torch.optim.AdamW([
 | Training negatives per positive | 1                                    | 1                                        | MEDIUM                           | Fix 11   |
 | Gradient clipping               | max_norm=1.0                         | None                                     | MEDIUM                           | Fix 8    |
 | L2 normalization of embeddings  | Applied to all (item, outfit, user)  | Partial (outfit, user only)              | MEDIUM                           | Fix 9    |
-| Graph forward per batch         | Once per batch (slow, minor leak)    | Once per batch                           | MEDIUM                           | Fix 10   |
+| Graph forward per batch         | Once per batch                       | Once per batch (Fix 10 reverted)         | MEDIUM (speed only)              | Fix 10 — reverted; see future options |
 | Item-item graph density         | Pre-built similarity (103K edges)    | Category+cooc top-10 (298K edges)        | MEDIUM                           | Fix 12   |
 | Embedding optimizer groups      | Single group (1e-5)                  | Single group (1e-3 uniform)              | LOWER                            | Fix 13   |
 | Compatibility negatives         | Random item                          | Hard (same-category)                     | MEDIUM                           | —        |
