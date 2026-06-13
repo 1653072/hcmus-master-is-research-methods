@@ -1,22 +1,26 @@
 # H-FGAT: Hierarchical Fashion Graph Attention Network
 
 **Original Target**: 16GB RAM machines  
-**Updated**: June 6, 2026
+**Updated**: June 13, 2026
 
 ---
 
 ## 📖 Table of Contents
 
 1. [Project Overview](#project-overview)
-2. [Key Features](#key-features)
-3. [Installation](#installation)
-4. [Quick Start](#quick-start)
-5. [Model Architecture](#model-architecture)
-6. [Training & Output](#training--output)
-7. [Inference Example](#inference-example)
-8. [Technical Notes](#technical-notes)
-9. [For Apple Silicon / high-memory users](#for-apple-silicon-high-memory-users)
-10. [File Management & Git LFS](#file-management--git-lfs)
+2. [Recent Training Improvements](#recent-training-improvements)
+3. [Key Features](#key-features)
+4. [Installation](#installation)
+5. [Quick Start](#quick-start)
+6. [Model Architecture](#model-architecture)
+7. [Training & Output](#training--output)
+8. [Evaluation Protocol](#evaluation-protocol)
+9. [Inference Example](#inference-example)
+10. [Technical Notes](#technical-notes)
+11. [For Apple Silicon / high-memory users](#for-apple-silicon-high-memory-users)
+12. [File Management & Git LFS](#file-management--git-lfs)
+13. [Troubleshooting](#troubleshooting)
+14. [References](#references)
 
 ---
 
@@ -28,6 +32,8 @@ This is a rewritten implementation of **Hierarchical Fashion Graph Attention Net
 - **Original**: 16GB RAM machines
 - **Updated**: 36GB RAM Apple Silicon with Metal Performance Shaders (MPS)
 
+The implementation is based on the paper *Hybrid-hierarchical fashion graph attention network for compatibility-oriented and personalized outfit recommendation*, with training behavior aligned to the author's reference notebook after a detailed code comparison (see [`compare_team_and_author/analysis.md`](../compare_team_and_author/analysis.md)).
+
 ### Objectives of This Rewrite
 
 1. **Preserve Original Pipeline**: Maintain the author's original architecture:
@@ -35,40 +41,62 @@ This is a rewritten implementation of **Hierarchical Fashion Graph Attention Net
    - Hierarchical graph construction (item-item, outfit-item, user-outfit)
    - Joint recommendation + outfit compatibility tasks
 
-2. **Data Efficiency**: 
-   - Subsample ~30k users initially, keep only relevant outfits and items
-   - Only embed images from subsampled set with filename format: `item_id.png`
+2. **Data Efficiency**:
+   - Filter users by minimum interaction count; keep only related outfits and items
+   - Only embed images from the filtered set with filename format: `item_id.png`
 
 3. **Code Quality**:
    - Cleaner, modularized code structure
-   - Produces complete `model.pt` checkpoint for demo application use
+   - Produces complete `model.pt` / `best_model.pt` checkpoints for demo application use
 
 4. **Hardware Optimization**:
    - Original: CPU/CUDA support for 16GB machines
-   - Updated: MPS (Metal Performance Shaders) support for Apple M1/M2/M3/M4 chips
+   - Updated: MPS (Metal Performance Shaders) support for Apple M1/M2/M3/M4/M5 chips
+
+---
+
+## Recent Training Improvements
+
+As of **June 13, 2026**, `hfgat_runall_rewrite_validate_fixed.ipynb` incorporates fixes from the author-vs-team analysis. These changes address overfitting (train loss dropping while val loss stays flat) and low Precision@10 compared to the paper.
+
+| Fix | Change | Rationale |
+|-----|--------|-----------|
+| **Eval negatives** | `sampled_negatives=50` (was 99) | Matches author's evaluation protocol for fair metric comparison |
+| **Recommendation scorer** | Dot product on L2-normalized embeddings (removed MLP scorer) | Reduces memorization; aligns with author's cosine-similarity design |
+| **λ_comp** | `LAMBDA_COMP=0.5` (was 0.1) | Stronger compatibility regularization on item embeddings |
+| **Data split** | Random 80/10/10 edge split (was per-user stratified holdout) | Larger, more reliable validation set (~68K val edges vs ~5.8K) |
+| **Early stopping** | `PATIENCE=10` on val NDCG@10 | Stops training when validation ranking quality plateaus |
+| **LR scheduler** | `ReduceLROnPlateau` (mode=max, factor=0.5, patience=5) | Halves learning rate when NDCG@10 stops improving |
+| **Weight decay** | `WEIGHT_DECAY=1e-5` (was 1e-3) | Matches author; avoids crushing large embedding tables |
+| **Gradient clipping** | `clip_grad_norm_(max_norm=1.0)` | Stabilizes training with large ResNet152/BERT projections |
+| **L2 normalization** | `encode_items` output normalized | Consistent embedding scale across item/outfit/user layers |
+| **Per-epoch graph forward** | One full graph propagation per epoch | Faster training; more stable gradients vs per-batch forward |
+| **Training negatives** | `NEG_PER_POS=5` (was 1) | Stronger BPR signal; closer to evaluation difficulty |
+
+For the full diff against the author's `fgat-session-3-train-model.ipynb`, see [`compare_team_and_author/analysis.md`](../compare_team_and_author/analysis.md).
 
 ---
 
 ## Key Features
 
 ✅ **Multimodal Embeddings**
-- Image features: ResNet152 (deepest network, 2048-dim)
+- Image features: ResNet152 (2048-dim)
 - Text features: BERT-base-Chinese (768-dim)
 - Category features: One-hot encoding
 
 ✅ **Graph Neural Networks**
-- Item-Item graph: Category similarity + outfit co-occurrence
+- Item-Item graph: Category similarity + outfit co-occurrence (top-10 neighbors per item)
 - Outfit-Item graph: Which items compose each outfit
-- User-Outfit graph: User-outfit interactions
+- User-Outfit graph: User-outfit interactions (train-only graph during training to avoid leakage)
 
 ✅ **Dual Tasks**
-- Recommendation: Predict next outfit for user
-- Compatibility: Score outfit item combinations
+- Recommendation: BPR contrastive learning (user → outfit)
+- Compatibility: BPR on outfit item sets (hard same-category negatives)
 
 ✅ **Hardware Support**
-- MPS (Mac M-series GPU) - ⚡ Primary
-- CUDA (NVIDIA GPU) - For Colab
-- CPU (Fallback) - Works but slower
+- MPS (Mac M-series GPU) — primary
+- CUDA (NVIDIA GPU) — for Colab
+- CPU (fallback) — works but slower
 
 ---
 
@@ -110,7 +138,7 @@ pip install torch torchvision torchaudio
 ### Step 3: Install Required Packages
 
 ```bash
-pip install torch torchvision transformers pandas numpy pillow requests torch-geometric torch-scatter streamlit
+pip install torch torchvision transformers pandas numpy pillow requests torch-geometric torch-scatter streamlit tqdm
 ```
 
 ### Step 4: Verify Installation
@@ -150,35 +178,50 @@ Dataset/
 #### Option A: Jupyter Notebook (Interactive)
 
 ```bash
-# Open in VS Code or Jupyter
 jupyter notebook hfgat_runall_rewrite_validate_fixed.ipynb
-
-# Run cells sequentially (1→33)
 ```
 
-**Expected duration**: ~6.5-8.5 hours on Apple Silicon / high-memory systems
+Run all cells from top to bottom. Training metrics are logged each epoch under **TRAIN WITH DETAILED METRICS**.
+
+**Expected duration**: ~5–7 hours on Apple Silicon / high-memory systems (depends on `EPOCHS` and early stopping)
 
 #### Option B: Python Script
 
 ```bash
-# Convert notebook to script
 jupyter nbconvert --to script hfgat_runall_rewrite_validate_fixed.ipynb
-
-# Run script
 python hfgat_runall_rewrite_validate_fixed.py
 ```
 
-#### Option C: Direct Configuration Override
+#### Option C: Configuration (Cell 2)
 
-Edit `Cell 1` of the notebook to customize:
+Current default hyperparameters in the notebook:
 
 ```python
-DEVICE = "mps"  # Auto-detected: mps > cuda > cpu
-IMAGE_BACKBONE = "resnet152"  # 36GB RAM option
-EMBED_DIM = 256  # 36GB RAM option
-BATCH_SIZE = 1024  # 36GB RAM option
-EPOCHS = 80  # 36GB RAM option
-MIN_USER_INTERACTIONS = 5  # Data quality filter
+# Device (auto-detected)
+DEVICE = "mps"  # mps > cuda > cpu
+
+# Feature extraction
+IMAGE_BACKBONE = "resnet152"
+TEXT_MODEL_NAME = "bert-base-chinese"
+IMAGE_BATCH_SIZE = 64
+TEXT_BATCH_SIZE = 128
+
+# Model
+EMBED_DIM = 64
+DROPOUT = 0.3
+
+# Training (aligned with author comparison fixes)
+LR = 0.001
+WEIGHT_DECAY = 1e-5
+EPOCHS = 50
+BATCH_SIZE = 1024
+LAMBDA_COMP = 0.5
+NEG_PER_POS = 5
+PATIENCE = 10
+
+# Data filter
+MIN_USER_INTERACTIONS = 4
+MIN_TOP_NEIGHBORS = 10
 ```
 
 ---
@@ -193,42 +236,52 @@ Input Data
 ├── Titles → BERT-base-Chinese → [768-dim features]
 └── Categories → One-hot encoding → [C-dim features]
         ↓
-    [Concatenate]
+    [Concatenate + Item Fusion MLP]
         ↓
-    Item Fusion MLP (256-dim)
-        ↓
-    [Item Embeddings: 256-dim]
+    [Item Embeddings: 64-dim, L2-normalized]
 ```
 
-### Hierarchical Graph Attention
+### Hierarchical Graph Encoder (`HFGATLite`)
 
 ```
-[Item Embeddings]
+[Item Embeddings]  ← sparse item-item graph (category + co-occurrence)
         ↓
-    [Item-Item Graph]
-    Category Edges + Co-occurrence
+[Outfit Embeddings]  ← sparse outfit-item graph + learnable outfit base
         ↓
-    [Outfit Aggregation]
-    Outfit-Item Graph
+[User Embeddings]  ← sparse user-outfit graph (train edges only) + learnable user base
         ↓
-    [User Aggregation]
-    User-Outfit Graph
-        ↓
-┌───────────┬───────────┐
-│ RECOMMENDATION │ COMPATIBILITY │
-│   Task   │   Task   │
-└───────────┴───────────┘
+┌──────────────────┬──────────────────┐
+│  RECOMMENDATION  │  COMPATIBILITY   │
+│  dot(u, o)       │  self-attn pool  │
+│  (cosine sim)    │  + compat MLP    │
+└──────────────────┴──────────────────┘
 ```
 
 ### Training Objectives
 
-1. **Recommendation Loss**: BPR-style contrastive learning
-   - Positive: user → outfit interaction
-   - Negative: random outfit from different user
+1. **Recommendation loss** (BPR):
+   - Positive: observed user–outfit edge
+   - Negative: `NEG_PER_POS` random outfits not in user's positive set
+   - Score: dot product of L2-normalized user and outfit embeddings
 
-2. **Compatibility Loss**: Binary classification
-   - Positive: items already in same outfit
-   - Negative: items from different categories
+2. **Compatibility loss** (BPR):
+   - Positive: items in a real outfit
+   - Negative: same-category hard negative (one item swapped)
+   - Combined: `loss = rec_loss + LAMBDA_COMP * comp_loss`
+
+### Paper Target Metrics (author reference)
+
+From the author's reported results on the reference branch:
+
+| Metric | Target |
+|--------|--------|
+| HR@10 | 0.4286 |
+| Precision@10 | 0.4424 |
+| Recall@10 | 0.1580 |
+| NDCG@10 | 0.1340 |
+| Compat Acc | 0.8956 |
+
+Note: the author's public notebook has a validation bug (`TypeError` on epoch 1); see analysis doc for details. Use `sampled_negatives=50` when comparing metrics.
 
 ---
 
@@ -236,64 +289,60 @@ Input Data
 
 ### Output Files
 
-After training completes, `output_hfgat_notebook/` directory contains:
+After training completes, `output_hfgat_notebook/` contains:
 
 ```
 output_hfgat_notebook/
 ├── model.pt                          # Final trained model (complete checkpoint)
-├── best_model.pt                     # Best validation checkpoint
+├── best_model.pt                     # Best validation checkpoint (by NDCG@10)
 ├── best_validation_metrics.json      # Best metrics achieved
-├── training_history.csv              # Training loss/metrics per epoch
-├── training_history_detailed.csv     # Detailed training statistics
-├── validation_report.json            # Final validation report
+├── training_history_detailed.csv     # Per-epoch train/val loss and ranking metrics
 ├── split_stats.json                  # Train/val/test split information
 │
-├── subsample/                        # Subsampled data
-│   ├── item_sub.csv                 # Subsampled items
-│   ├── outfit_sub.csv               # Subsampled outfits
-│   ├── user_sub.csv                 # Subsampled users
-│   ├── train_uo_sub.csv             # Subsampled interactions
-│   └── subsample_stats.json         # Subsample statistics
+├── subsample/                        # Filtered data artifacts
+│   ├── item_sub.csv
+│   ├── outfit_sub.csv
+│   ├── user_sub.csv
+│   ├── train_uo_sub.csv
+│   └── subsample_stats.json
 │
-├── cache/                            # Feature cache (regenerable)
-│   └── item_features.pt             # Cached image/text/category features
-│
-├── cache_old/                        # Previous cache version
-└── exported_embeddings/              # Final embeddings for inference
-    ├── user_embeddings.pt           # User embeddings
-    ├── item_embeddings.pt           # Item embeddings
-    ├── outfit_embeddings.pt         # Outfit embeddings
-    ├── user2idx.json                # User ID mappings
-    ├── item2idx.json                # Item ID mappings
-    ├── outfit2idx.json              # Outfit ID mappings
-    └── item_meta_ordered.csv        # Item metadata
+└── cache/                            # Feature cache (regenerable)
+    └── item_features.pt             # Cached image/text/category features
 ```
+
+### Per-Epoch Logged Metrics
+
+Each epoch prints:
+
+- `train_loss`, `train_rec_loss`, `train_comp_loss`
+- `val_total_loss`, `val_rec_loss`, `val_comp_loss`
+- `compat_acc`
+- Ranking: `HR@10`, `Precision@10`, `Recall@10`, `NDCG@10`, `MRR@10`, `AUC`
+- Current learning rate and early-stop patience counter
 
 ### Monitoring Training
 
-**Option 1: VS Code Resource Monitor**
-- Install "Resource Monitor" extension
-- Shows real-time CPU/Memory
+**Option 1: VS Code Resource Monitor** — real-time CPU/memory  
+**Option 2: Activity Monitor** — `open -a "Activity Monitor"`  
+**Option 3: Command line** — `watch -n 1 'vm_stat | head -3'`
 
-**Option 2: Activity Monitor**
-```bash
-open -a "Activity Monitor"
-```
+**Expected resource usage** (36GB RAM, MPS):
+- Peak memory: ~20–24 GB
+- GPU (Metal): high utilization during training batches
 
-**Option 3: Command Line**
-```bash
-# Monitor power/memory
-watch -n 1 'vm_stat | head -3'
+---
 
-# Apple Silicon specific
-powermetrics -s cpu_power -n 1
-```
+## Evaluation Protocol
 
-**Expected Resource Usage**:
-- Peak Memory: 20-24 GB (out of 36GB available)
-- Active Memory: 15-18 GB
-- CPU Cores: 8-10 cores (all P-cores)
-- GPU (Metal): 70-80% utilization
+To compare fairly with the author's reported numbers:
+
+| Setting | Value | Notes |
+|---------|-------|-------|
+| Eval negatives | **50** per user | Author uses 50; 99 makes Precision@10 look ~2–3× lower |
+| Top-K | 10 | HR@10, Precision@10, Recall@10, NDCG@10 |
+| Split | Random **80/10/10** on user–outfit edges | ~543K / ~68K / ~68K edges |
+| Train graph | Train edges only | Val/test edges excluded from user–outfit propagation |
+| Early stopping | Best checkpoint by **NDCG@10** | Saved to `best_model.pt` |
 
 ---
 
@@ -305,33 +354,26 @@ powermetrics -s cpu_power -n 1
 import torch
 from pathlib import Path
 
-# Load model
-model_path = Path("output_hfgat_notebook/model.pt")
-checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+checkpoint = torch.load(
+    Path("output_hfgat_notebook/best_model.pt"),
+    map_location="cpu",
+    weights_only=False,
+)
 
-# Extract components
-model = checkpoint["model"]
-user2idx = checkpoint["user2idx"]
-item2idx = checkpoint["item2idx"]
-user_embeddings = checkpoint["user_embeddings"]  # Pre-computed
+model_state = checkpoint["model_state_dict"]
+user2idx = checkpoint["mappings"]["user2idx"]
+outfit2idx = checkpoint["mappings"]["outfit2idx"]
+best_metrics = checkpoint.get("best_metrics", {})
 
-# Recommend outfits for user_id="12345"
-user_idx = user2idx["12345"]
-user_vec = user_embeddings[user_idx]
-
-# Score outfits
-outfit_scores = torch.matmul(user_vec, outfit_embeddings.T)
-top_k = torch.topk(outfit_scores, k=10)
-
-print(f"Top 10 recommended outfits: {top_k.indices.tolist()}")
+print("Best NDCG@10:", best_metrics.get("NDCG@10"))
 ```
+
+Recommendation scoring uses dot product on normalized user/outfit embeddings (same as training).
 
 ### Run Streamlit Demo
 
 ```bash
-# Run interactive demo application
 streamlit run sample_app.py
-
 # Opens http://localhost:8501
 ```
 
@@ -341,121 +383,85 @@ streamlit run sample_app.py
 
 ### Configuration Options by Hardware
 
-| Parameter | 16GB RAM | 36GB+ RAM | Notes |
-|-----------|----------|-----------|-------|
-| IMAGE_BACKBONE | resnet50 | resnet152 | Deeper network = better features |
-| EMBED_DIM | 128 | 256 | Higher dimension = richer representation |
-| HIDDEN_DIM | 128 | 256 | Larger MLP layers |
-| IMAGE_BATCH_SIZE | 32 | 64 | Parallel image processing |
-| TEXT_BATCH_SIZE | 64 | 128 | Parallel text processing |
+| Parameter | 16GB RAM | 36GB+ RAM (current defaults) | Notes |
+|-----------|----------|-------------------------------|-------|
+| IMAGE_BACKBONE | resnet50 | resnet152 | Deeper CNN |
+| EMBED_DIM | 64–128 | 64 | Compressed embeddings reduce overfitting |
+| IMAGE_BATCH_SIZE | 32 | 64 | Feature extraction |
+| TEXT_BATCH_SIZE | 64 | 128 | Feature extraction |
 | BATCH_SIZE | 512 | 1024 | Training batch size |
-| EPOCHS | 30 | 80 | Training iterations |
-| MIN_USER_INTERACTIONS | 4 | 5 | Data quality threshold |
-
-### Feature Extraction Models
-
-**Default (Current)**:
-- Image: ResNet50 (2048-dim)
-- Text: BERT-base-Chinese (768-dim)
-
-**Alternative (high-memory capable)**:
-- Image: ResNet152 (2048-dim, deeper)
-- Text: BERT-large-Chinese (1024-dim, larger)
+| EPOCHS | 30–40 | 50 | Early stopping may finish sooner |
+| MIN_USER_INTERACTIONS | 4 | 4 | Users with fewer edges excluded |
 
 ### Negative Sampling Strategy
 
-- **Recommendation task**: Random outfit from different user
-- **Compatibility task**: Item from different category
+| Task | Strategy |
+|------|----------|
+| Recommendation (train) | `NEG_PER_POS=5` random outfits per positive |
+| Recommendation (eval) | 50 sampled negatives + all val positives per user |
+| Compatibility (train) | Hard negative: same-category item swapped into outfit |
+| Compatibility (eval) | Held-out outfit split (80/20) |
 
-### Text Model Selection
+### Data Split
 
-- **Chinese titles**: Use `bert-base-chinese` (default)
-- **English titles**: Use `bert-base-uncased`
-- **Multilingual**: Use `bert-base-multilingual-uncased`
+- **User–outfit edges**: random shuffle, then 80% train / 10% val / 10% test
+- **Compatibility outfits**: 80% train / 20% val by outfit index
+- **User–outfit graph at train time**: built from **train edges only** (no val/test leakage)
 
 ---
 
 ## For Apple Silicon / high-memory users
 
-### 🚀 Performance Optimization Highlights
+### Performance highlights
 
-**GPU Acceleration**:
 - Automatic MPS detection (Metal Performance Shaders)
-- ~10-30x faster than CPU for neural networks
-- Seamless fallback if unavailable
+- Larger batch sizes (1024) and ResNet152 backbone
+- Per-epoch graph forward reduces redundant sparse operations vs per-batch forward
 
-**Memory Efficiency**:
-- 36GB RAM allows larger batch sizes
-- 2x training parallelism (1024 vs 512 batch size)
-- 2x embedding dimensions (256 vs 128)
-- 2.7x training iterations (80 vs 30 epochs)
+### Recommended configuration (Cell 2)
 
-**Training Time**:
-- **ResNet152 + BATCH_SIZE=1024**: ~18 sec/epoch
-- **Total for 80 epochs**: ~6.5-8.5 hours
-- **Faster than original**: ~2-3x speedup
-
-### ⚠️ Known MPS Limitations
-
-1. Some sparse tensor operations may fall back to CPU (expected, monitored)
-2. Non-deterministic behavior (slight variations between runs)
-3. Rare compatibility issues with certain PyTorch operations
-
-**Workaround**: If issues occur, switch to CPU:
 ```python
-DEVICE = "cpu"  # Slower but fully stable
+DEVICE = "mps"               # Auto-detected
+IMAGE_BACKBONE = "resnet152"
+EMBED_DIM = 64
+BATCH_SIZE = 1024
+EPOCHS = 50
+LAMBDA_COMP = 0.5
+NEG_PER_POS = 5
+WEIGHT_DECAY = 1e-5
+PATIENCE = 10
 ```
 
-### 📊 Recommended Configuration for high-memory systems
+### Known MPS limitations
 
-**In Cell 1 of notebook**:
-```python
-DEVICE = "mps"              # Auto-detected
-IMAGE_BACKBONE = "resnet152" # Upgrade from resnet50
-EMBED_DIM = 256             # Upgrade from 128
-HIDDEN_DIM = 256            # Upgrade from 128
-IMAGE_BATCH_SIZE = 64       # Upgrade from 32
-TEXT_BATCH_SIZE = 128       # Upgrade from 64
-BATCH_SIZE = 1024           # Upgrade from 512
-EPOCHS = 80                 # Upgrade from 30
-```
+1. Some sparse tensor ops may fall back to CPU
+2. Slight non-determinism between runs
+3. Rare compatibility issues with certain PyTorch versions
 
-For detailed hardware optimization guidance, review the configuration examples in this README.
+**Workaround**: `DEVICE = "cpu"` for maximum stability (slower).
 
 ---
 
 ## File Management & Git LFS
 
-### ⚠️ Large Files
+### Large files
 
-Several files exceed 50MB and should be tracked with Git LFS:
+Track with Git LFS when committing:
 
 ```
-output_hfgat_notebook/cache/item_features.pt           (160 MB)
-output_hfgat_notebook/cache_old/item_features.pt       (143 MB)
-output_hfgat_notebook/cache_old1/item_features.pt      (143 MB)
-output_hfgat_notebook/best_model.pt                    (variable)
-output_hfgat_notebook/model.pt                         (variable)
+output_hfgat_notebook/cache/item_features.pt
+output_hfgat_notebook/best_model.pt
+output_hfgat_notebook/model.pt
 ```
 
 ### Setup Git LFS
 
 ```bash
-# Install Git LFS
-brew install git-lfs  # Mac
-sudo apt install git-lfs  # Linux
-
-# Initialize in repository
-cd /path/to/repository
+brew install git-lfs   # Mac
 git lfs install
-
-# Track .pt files
 git lfs track "*.pt"
 git add .gitattributes
-git commit -m "Track PyTorch .pt files with Git LFS"
 ```
-
-For detailed Git LFS commands, use standard Git LFS documentation and repository tracking patterns.
 
 ---
 
@@ -464,21 +470,24 @@ For detailed Git LFS commands, use standard Git LFS documentation and repository
 | Issue | Cause | Solution |
 |-------|-------|----------|
 | `ModuleNotFoundError: torch` | PyTorch not installed | `pip install torch torchvision` |
-| `MPS not available` | PyTorch too old or Mac OS incompatible | `pip install --upgrade torch` |
-| `Out of memory` | Batch sizes too large | Reduce by 50%: `BATCH_SIZE=512`, `IMAGE_BATCH_SIZE=32` |
-| `Model not converging` | Learning rate too high | Reduce: `LR=0.00005` |
-| `NaN in loss` | Gradient explosion | Reduce embedding dims: `EMBED_DIM=128` |
-| `Slow feature extraction` | CPU fallback from MPS | Use `DEVICE="cpu"` for extraction only |
+| `MPS not available` | Old PyTorch or unsupported OS | `pip install --upgrade torch` |
+| `Out of memory` | Batch too large | Reduce `BATCH_SIZE` to 512 or 256 |
+| Train loss ↓, val loss flat | Overfitting / weak regularization | Confirm `LAMBDA_COMP=0.5`, dot-product scorer, 80/10/10 split |
+| Low Precision@10 vs paper | Different eval protocol | Use `sampled_negatives=50`; see analysis doc |
+| `NaN in loss` | Gradient explosion | Gradient clipping is enabled (`max_norm=1.0`); try lower `LR` |
+| Training stops early | Early stopping triggered | Normal if NDCG@10 plateaus; check `best_model.pt` |
+| `verbose` scheduler warning | Older PyTorch | Safe to ignore or remove `verbose=True` from scheduler |
 
 ---
 
 ## References
 
-- **H-FGAT Paper**: Hierarchical Dependency Attention Network for Fashion Outfit Recommendation
-- **PyTorch Documentation**: https://pytorch.org/docs/
-- **PyTorch MPS Guide**: https://pytorch.org/docs/stable/notes/mps.html
-- **Torch Geometric**: https://pytorch-geometric.readthedocs.io/
+- **H-FGAT Paper**: *Hybrid-hierarchical fashion graph attention network for compatibility-oriented and personalized outfit recommendation* — [ScienceDirect](https://www.sciencedirect.com/science/article/pii/S2666827025001859)
+- **Author reference code**: [kimnguyen branch](https://github.com/1653072/hcmus-master-is-research-methods/tree/kimnguyen) — `fgat-session-3-train-model.ipynb`
+- **Team vs author analysis**: [`compare_team_and_author/analysis.md`](../compare_team_and_author/analysis.md)
+- **PyTorch**: https://pytorch.org/docs/
+- **PyTorch MPS**: https://pytorch.org/docs/stable/notes/mps.html
 
 ---
 
-**Last Updated**: June 6, 2026 | **License**: [See original repository]
+**Last Updated**: June 13, 2026 | **License**: [See original repository]
