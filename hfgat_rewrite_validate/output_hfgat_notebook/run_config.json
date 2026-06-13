@@ -5,9 +5,9 @@
   "TEXT_MODEL_NAME": "bert-base-chinese",
   "EMBED_DIM": 64,
   "EPOCHS": 40,
-  "LR": 0.0001,
-  "WEIGHT_DECAY": 0.001,
-  "LAMBDA_COMP": 0.1,
+  "LR": 0.001,
+  "WEIGHT_DECAY": 1e-05,
+  "LAMBDA_COMP": 0.2,
   "BATCH_SIZE": 1024,
   "VAL_RATIO": 0.1,
   "device_used": "mps"
