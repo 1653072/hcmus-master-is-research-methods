@@ -804,3 +804,85 @@ optimizer = torch.optim.AdamW([
 | Author notebook bug             | TypeError crashes epoch 1 validation | N/A                                      | NOTE                             | —        |
 
 
+---
+
+## Post-Training Update (June 2025): `val_total_loss`, `LAMBDA_COMP`, and Precision@10
+
+### `LAMBDA_COMP` tuned to 0.2
+
+After Fixes 1–11 with `LAMBDA_COMP=0.5`, training showed:
+
+- `val_rec_loss` **decreasing** (0.60 → ~0.51) — recommendation is learning
+- `val_total_loss` **increasing** (0.91 → ~2.07) — dominated by rising `val_comp_loss`
+- `train_comp_loss` collapsing to ~0.01 while compat val loss grows → compatibility branch overfits held-out outfits
+
+`val_total_loss = val_rec_loss + λ · val_comp_loss`. With λ=0.5, even modest compat val degradation inflates the headline number. **λ=0.2** keeps compatibility as a regularizer without letting compat val dominate monitoring. **Use NDCG@10 / HR@10 for early stopping**, not `val_total_loss`.
+
+Epoch output now prints `val_comp_loss` and `avg_val_outfits` / `prec_ceiling@10` for clearer diagnosis.
+
+### Precision@10 ≈ 0.08 is mostly expected — not a broken model
+
+After aligning scorer (dot product), eval negatives (50), and split (80/10/10 edges), epoch-6 metrics were:
+
+| Metric | Value | Interpretation |
+|--------|-------|----------------|
+| HR@10 | 0.678 | ~68% of val users have ≥1 relevant outfit in top-10 |
+| Recall@10 | 0.637 | ~64% of each user's val outfits are retrieved in top-10 |
+| NDCG@10 | 0.359 | Ranking quality improving steadily |
+| Precision@10 | 0.080 | Looks low vs author's ~0.44 |
+
+**Root cause: metric definition + sparse val users, not ranking failure.**
+
+`ranking_metrics_multi_k` computes per user:
+
+```python
+precision@k = (hits in top-k) / k        # always divides by k=10
+recall@k    = (hits in top-k) / |true_set|
+```
+
+With **random edge-level 80/10/10 split**, most users have only **1–2 total interactions** (`MIN_USER_INTERACTIONS=4` filters further). Typical val user has **|true_set| ≈ 1**.
+
+When |true_set| = 1:
+
+- If the outfit is in top-10: **Precision@10 = 1/10 = 0.10** (hard ceiling per user)
+- HR@10 = Recall@10 (same binary outcome)
+- Expected Precision@10 ≈ HR@10 × 0.10 ≈ 0.68 × 0.10 ≈ **0.068**
+
+Observed **0.08** matches this ceiling — the model is performing **near optimally** for this metric under this split.
+
+The notebook now reports:
+
+- `avg_val_outfits_per_user` — mean |true_set| in eval (expect ~1–2)
+- `precision_ceiling_perfect@10` — mean of `min(|true_set|, 10) / 10` if ranking were perfect (expect ~0.10–0.15 with sparse users)
+
+**Do not compare raw Precision@10 to the author's 0.44 without checking |true_set| per eval.**
+
+### Why the author's Precision@10 = 0.44 is not apples-to-apples
+
+1. **Author notebook on `kimnguyen` branch crashes at epoch-1 validation** (`TypeError` in `H_HFGAT.forward`) — reported numbers likely from an unreleased fixed notebook.
+2. **Different eval aggregation**: author `evaluate_rec()` runs per DataLoader batch; when the same user appears with **multiple val outfits in one batch**, up to several positives enter the same candidate pool → Precision@10 can exceed 0.1 per eval step.
+3. **Line-based vs edge-based split**: author's 80/10/10 on interaction lines can leave users with more val outfits per evaluation than edge-level random split on sparse users.
+
+### Secondary factors (already addressed)
+
+| Factor | Status |
+|--------|--------|
+| 99 vs 50 eval negatives | Fixed (50) |
+| MLP vs dot-product scorer | Fixed (dot product) |
+| Stratified vs random split | Fixed (random 80/10/10) |
+
+### MPS eval crash (epoch 11)
+
+Building `score_map` with `.item()` on MPS tensors can hang or error. Fixed with `.detach().cpu().item()` in `ranking_metrics_multi_k`.
+
+### If you need higher reported Precision@10
+
+These change the metric or data — not model quality:
+
+1. **User-level or line-level val split** so users retain multiple val outfits per eval
+2. **Author-style batch eval** (`evaluate_rec` per batch, grouping in-batch positives)
+3. **Report `Precision@10 / precision_ceiling_perfect@10`** as "fraction of theoretical max"
+4. **Filter eval** to users with ≥3 val outfits for paper-style comparison
+
+**Recommendation:** treat **NDCG@10, HR@10, Recall@10** as primary ranking metrics; interpret Precision@10 only alongside `avg_val_outfits_per_user` and `prec_ceiling@10`.
+

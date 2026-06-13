@@ -63,7 +63,7 @@ As of **June 13, 2026**, `hfgat_runall_rewrite_validate_fixed.ipynb` incorporate
 |-----|--------|-----------|
 | **Eval negatives** | `sampled_negatives=50` (was 99) | Matches author's evaluation protocol for fair metric comparison |
 | **Recommendation scorer** | Dot product on L2-normalized embeddings (removed MLP scorer) | Reduces memorization; aligns with author's cosine-similarity design |
-| **λ_comp** | `LAMBDA_COMP=0.5` (was 0.1) | Stronger compatibility regularization on item embeddings |
+| **λ_comp** | `LAMBDA_COMP=0.2` (was 0.1 → 0.5 → 0.2) | Compatibility regularization; 0.2 balances val_rec vs val_comp in `val_total_loss` |
 | **Data split** | Random 80/10/10 edge split (was per-user stratified holdout) | Larger, more reliable validation set (~68K val edges vs ~5.8K) |
 | **Early stopping** | `PATIENCE=10` on val NDCG@10 | Stops training when validation ranking quality plateaus |
 | **LR scheduler** | `ReduceLROnPlateau` (mode=max, factor=0.5, patience=5) | Halves learning rate when NDCG@10 stops improving |
@@ -215,7 +215,7 @@ LR = 0.001
 WEIGHT_DECAY = 1e-5
 EPOCHS = 50
 BATCH_SIZE = 1024
-LAMBDA_COMP = 0.5
+LAMBDA_COMP = 0.2
 NEG_PER_POS = 5
 PATIENCE = 10
 
@@ -315,9 +315,10 @@ output_hfgat_notebook/
 Each epoch prints:
 
 - `train_loss`, `train_rec_loss`, `train_comp_loss`
-- `val_total_loss`, `val_rec_loss`, `val_comp_loss`
+- `val_total_loss`, `val_rec_loss`, `val_comp_loss`, `val_bpr_loss`
 - `compat_acc`
 - Ranking: `HR@10`, `Precision@10`, `Recall@10`, `NDCG@10`, `MRR@10`, `AUC`
+- Diagnostics: `avg_val_outfits`, `prec_ceiling@10` (theoretical max Precision@10 given |true_set| per user)
 - Current learning rate and early-stop patience counter
 
 ### Monitoring Training
@@ -343,6 +344,8 @@ To compare fairly with the author's reported numbers:
 | Split | Random **80/10/10** on user–outfit edges | ~543K / ~68K / ~68K edges |
 | Train graph | Train edges only | Val/test edges excluded from user–outfit propagation |
 | Early stopping | Best checkpoint by **NDCG@10** | Saved to `best_model.pt` |
+
+**Precision@10 note:** With edge-level split, most val users have only **1 val outfit**. Precision@10 = hits/10, so the per-user ceiling is **0.10**; with HR@10≈0.66, expect Precision@10≈**0.07–0.08** — not comparable to author's ~0.44 without checking `avg_val_outfits`. Prefer **NDCG@10 / HR@10** for model quality. See `compare_team_and_author/analysis.md` (Post-Training Update).
 
 ---
 
@@ -505,7 +508,7 @@ IMAGE_BACKBONE = "resnet152"
 EMBED_DIM = 64
 BATCH_SIZE = 1024
 EPOCHS = 50
-LAMBDA_COMP = 0.5
+LAMBDA_COMP = 0.2
 NEG_PER_POS = 5
 WEIGHT_DECAY = 1e-5
 PATIENCE = 10
@@ -551,8 +554,8 @@ git add .gitattributes
 | `ModuleNotFoundError: torch` | PyTorch not installed | `pip install torch torchvision` |
 | `MPS not available` | Old PyTorch or unsupported OS | `pip install --upgrade torch` |
 | `Out of memory` | Batch too large | Reduce `BATCH_SIZE` to 512 or 256 |
-| Train loss ↓, val loss flat | Overfitting / weak regularization | Confirm `LAMBDA_COMP=0.5`, dot-product scorer, 80/10/10 split |
-| Low Precision@10 vs paper | Different eval protocol | Use `sampled_negatives=50`; see analysis doc |
+| Train loss ↓, val loss flat | Overfitting / weak regularization | Confirm `LAMBDA_COMP=0.2`, dot-product scorer, 80/10/10 split; monitor `val_comp_loss` separately |
+| Low Precision@10 vs paper | Sparse val users (|true_set|≈1) + metric divides by 10 | Check `avg_val_outfits` and `prec_ceiling@10`; use NDCG@10/HR@10; see analysis doc |
 | `NaN in loss` | Gradient explosion | Gradient clipping is enabled (`max_norm=1.0`); try lower `LR` |
 | Training stops early | Early stopping triggered | Normal if NDCG@10 plateaus; check `best_model.pt` |
 | `retain_graph` / version mismatch on backward | Once/epoch forward + step/batch | Use per-batch `forward_all_embeddings()` (current default); see analysis Fix 10 |
