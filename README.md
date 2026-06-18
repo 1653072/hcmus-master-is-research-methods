@@ -1,36 +1,157 @@
-# HCMUS Master IS - Research Methods Course
-**Description**: Repository for Research Methods course, used to store the codebase of AI models
+# Hybrid-Hierarchical Fashion Graph Attention Network for Compatibility-Oriented and Personalized Outfit Recommendation
+
+**Authors:** Sajjad Saed, Babak Teimourpour*
+
+**Affiliation:** Department of Information Technology Engineering, Faculty of Industrial and Systems Engineering, Tarbiat Modares University (TMU), Tehran, Iran  
+
+<p align="center">
+  <img src="Hybrid-Hierarchical Fashion Graph Attention Network.png" alt="Scheme of the Proposed FGAT Model" width="600"/>
+</p>
+
+This repository contains the implementation of **FGAT**, a Hybrid Hierarchical Fashion GAT model for Compatibility-Oriented and Personalized Outfit Recommendation proposed in our paper:
+> Saed, S., & Teimourpour, B. (2026). Hybrid-hierarchical fashion graph attention network for compatibility-oriented and personalized outfit recommendation. Machine Learning with Applications, 23, 100802. https://doi.org/10.1016/j.mlwa.2025.100802
+
+---
+
+## 📌 Abstract
+The rapid expansion of the fashion industry and the growing variety of products have made it increasingly challenging for users to identify compatible items on e-commerce platforms. Effective fashion recommendation systems are therefore crucial for filtering irrelevant options and suggesting suitable ones. However, simultaneously addressing outfit compatibility and personalized recommendations remains a significant challenge, as these aspects are typically treated independently in existing studies, thereby overlooking the complex interactions between items and user preferences. This research introduces a new framework named FGAT, which leverages a hierarchical graph representation together with attention mechanisms to address this problem. The framework constructs a three-tier graph of users, outfits, and items, integrating visual and textual features to jointly model outfit compatibility and user preferences. By dynamically weighting node importance during representation propagation, the graph attention mechanism captures key interactions and produces precise embeddings for both user preferences and outfit compatibility. Evaluated on the POG dataset, FGAT outperforms strong baselines such as HFGN, achieving notable improvements in accuracy, precision, hit ratio (HR), recall, and NDCG. These results demonstrate that combining multimodal visual–textual features with a hierarchical graph structure and attention mechanisms significantly enhances the effectiveness and efficiency of personalized fashion recommendation systems.
+
+> **✨ Key Contribution:
+>  
+> **Proposing a novel hybrid-hierarchical graph attention framework**
+>  
+> **Effectively fusing multimodal features (images, descriptions, and interaction structures) to enhance representation learning in recommendation**
+>  
+> **Category co-occurrence guides dynamic weighting across item relationships**
+>  
+> **Our model achieved HR@10=0.4286 ,Recall@10=0.1580 ,Precision@10=0.4424 ,NDCG@10=0.1340 ,accuracy=89.56% on the POG dataset, surpassing existing benchmarks.**
+
+---
+
+## 👩‍💻 Authors  
+**Sajjad Saed**  
+<p align="left">
+  <a href="https://www.linkedin.com/in/sajjad-saed-845908125/" target="_blank">
+    <img src="https://img.shields.io/badge/-Linkedin-blue?style=flat-square&logo=linkedin">
+  </a>  
+  <a href='https://scholar.google.com/citations?user=4xT5JlQAAAAJ&hl=en' target="_blank">
+    <img alt='GoogleScholar' src='https://img.shields.io/badge/Scholar-100000?style=flat&logo=GoogleScholar&logoColor=white&color=0181FF'>
+  </a>
+  <a href="https://www.researchgate.net/profile/Sajjad-Saed" target="_blank">
+    <img src="https://img.shields.io/badge/ResearchGate-00CCBB?style=flat&logo=ResearchGate&logoColor=white">
+  </a>
+  <a href="https://orcid.org/0009-0001-0087-9268" target="_blank">
+    <img src="https://img.shields.io/badge/ORCID-0009--0001--0087--9268-A6CE39?style=flat&logo=orcid&logoColor=white">
+  </a>
+    <a href="mailto:ssaed.89@gmail.com" target="_blank">
+    <img src="https://img.shields.io/badge/Gmail-D14836?style=flat&logo=gmail&logoColor=white">
+  </a>
+</p>
+
+**Dr.Babak Teimourpour**
+<p align="left">
+  <a href="https://www.linkedin.com/in/babak-teimourpour-7877482b/" target="_blank">
+    <img src="https://img.shields.io/badge/-Linkedin-blue?style=flat-square&logo=linkedin">
+  </a>  
+  <a href='https://scholar.google.com/citations?user=Hb0DMrUAAAAJ&hl=en' target="_blank">
+    <img alt='GoogleScholar' src='https://img.shields.io/badge/Scholar-100000?style=flat&logo=GoogleScholar&logoColor=white&color=0181FF'>
+  </a>
+  <a href="https://www.researchgate.net/profile/Babak-Teimourpour" target="_blank">
+    <img src="https://img.shields.io/badge/ResearchGate-00CCBB?style=flat&logo=ResearchGate&logoColor=white">
+  </a>
+  <a href="https://orcid.org/0000-0002-9286-2286" target="_blank">
+    <img src="https://img.shields.io/badge/ORCID-0000--0002--9286--2286-A6CE39?style=flat&logo=orcid&logoColor=white">
+  </a>
+</p>
+---
+
+## 📊 Performance
+
+| **Model**       |  **NDCG@10** | **Precision@10** | **Recall@10** |   **HR@10**  |
+| :-------------- | :----------: | :--------------: | :-----------: | :----------: |
+| FPITF           |    0.0420    |      0.1121      |     0.0183    |    0.1006    |
+| FHN             |    0.0490    |      0.1192      |     0.0208    |    0.1109    |
+| MF              |    0.0872    |      0.2391      |     0.0434    |    0.2121    |
+| VBPR            |    0.0949    |      0.2481      |     0.0449    |    0.2201    |
+| NGCF            |    0.1143    |      0.3104      |     0.0554    |    0.2619    |
+| HFGN            |    0.1241    |      0.3390      |     0.1265    |    0.3328    |
+| DTNM            |    0.1813    |      0.1654      |     0.0625    |       —      |
+| Try-On-CM       |       —      |         —        |       —       |    0.2900    |
+| RankBPR         |       —      |         —        |  ***0.1921*** |       —      |
+| BCDSVD++        |    0.1666    |      0.1483      |     0.0569    |       —      |
+| BPR             |    0.2633    |      0.2410      |     0.0559    |       —      |
+| LightGCN        |    0.2882    |      0.2632      |     0.1015    |       —      |
+| Hg-PDC          | ***0.3532*** |      0.3080      |     0.1402    |       —      |
+| **FGAT (Ours)** |    0.1340    |   ***0.4424***   |     0.1580    | ***0.4286*** |
 
 
-## Quick Notes
+| **Model**       |    **AUC**   | **Accuracy** |
+| :-------------- | :----------: | :----------: |
+| SiameseNet      |    0.7087    |    0.5039    |
+| Style2Vec       |   0.7321  |    0.6113    |
+| Bi-LSTM         |    0.7840    |    0.6384    |
+| FOM             |    0.8609    |    0.6879    |
+| FHN             |    0.8942    |    0.7422    |
+| FaTrans-Multi   |   0.7852  |    0.7760    |
+| NGNN            |    0.8381    |    0.8422    |
+| HFGN            |    0.8750    |    0.8797    |
+| **FGAT (Ours)** | ***0.8974*** | ***0.8956*** |
 
-1. There are 3 large files exceeding **100MB**, so we need to push them to Github LFS (i.e., Large File Storage):
+| **Metric**   | **HFGN (Baseline)** | **FGAT (Ours)** | **Improvement (%)** |
+| :----------- | :-----------------: | :-------------: | :-----------------: |
+| HR@10        |        0.3328       |      0.4286     |    **28.8 %**    |
+| Recall@10    |        0.1265       |      0.1580     |    **25.0 %**    |
+| Precision@10 |        0.3390       |      0.4424     |    **30.5 %**    |
+| NDCG@10      |        0.1241       |      0.1340     |    **8.0 %**    |
+| Accuracy     |        0.8797       |      0.8956     |    **1.81 %**    |
 
-    - hfgat_rewrite_validate/hfgat_rewrite_validate/output_hfgat_notebook/cache/item_features.pt
-    - hfgat_rewrite_validate/hfgat_rewrite_validate/output_hfgat_notebook/cache_old/item_features.pt
-    - hfgat_rewrite_validate/hfgat_rewrite_validate/output_hfgat_notebook/cache_old1/item_features.pt
+---
 
-2. Install Git LFS:
+## 🚀Features
+- Three-level user/outfit/item hierarchical graph
+- Multimodal item embeddings (ResNet-152 visual + BERT textual)
+- Category co-occurrence priors + attention-based propagation
+- Joint training for compatibility and personalized outfit recommendation
+---
 
-    - MacOS: `brew install git-lfs` or `sudo apt install git-lfs`
-    - Windows: `choco install git-lfs`
-    - Finally, install LFS into the current repository: `git lfs install`
+## 📂 Datasets
 
-3. Track/Untrack large files
+The datasets of the paper POG:
 
-    - Track: `git lfs track "*.pt"`
-    - Untrack: `git lfs untrack "*.pt"`
-    - Notice: All tracked LFS files will be stored at this path: `.git/lfs/objects`
+https://drive.google.com/drive/folders/1xFdx5xuNXHGsUVG2VIohFTXf9S7G5veq
+```
+**Data Format**
+Outfit data
+outfit_id,item_id;item_id;item_id...
 
-4. Pull latest LFS changes:
+User data
+user_id,outfit_id;outfit_id;...
 
-    - Command: `git lfs fetch --all && git lfs pull`
+Item data
+item_id,cate_id,pic_url,title
+```
+---
 
-5. De-duplicate LFS files to save disk:
+## 📚Citation
+If you use the datasets or findings from our paper, please cite [our paper](https://doi.org/10.1016/j.mlwa.2025.100802) in your work:
 
-    - Command: `git lfs dedup`
+```bibtex
+@article{SAED2026100802,
+title = {Hybrid-hierarchical fashion graph attention network for compatibility-oriented and personalized outfit recommendation},
+journal = {Machine Learning with Applications},
+volume = {23},
+pages = {100802},
+year = {2026},
+issn = {2666-8270},
+doi = {https://doi.org/10.1016/j.mlwa.2025.100802},
+url = {https://www.sciencedirect.com/science/article/pii/S2666827025001859},
+author = {Sajjad Saed and Babak Teimourpour}
+}
+```
 
-6. Check reference links and environment of LFS files:
+---
 
-    - Comman: `git lfs env`
+## 📝 License
+
+This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for more details.
 
