@@ -46,10 +46,20 @@ MAX_OUTFIT_ITEMS_FOR_COMP = 10
 EPOCHS = 40
 LR = 0.001
 WEIGHT_DECAY = 1e-5
-LAMBDA_COMP = 0.2
+# Multi-task weight: val_total = val_rec + LAMBDA_COMP * val_comp.
+# Early-stop on HR@10 / NDCG — not val_total (compat BPR scale is separate from ranking).
+LAMBDA_COMP = 0.15
+
+# Compatibility: scored on base item_embs only (NOT GAT item_upd).
+# Rec reshapes item_upd every epoch → blending GAT into compat caused train↓ val↑ collapse.
+COMPAT_DETACH_INPUT = True    # compat trains CompatibilityScorer only (no emb/GAT tug-of-war)
+COMPAT_BPR_MARGIN = 0.0       # standard BPR; margin=0.25 inflated val loss when margin went negative
+COMPAT_LR_MULT = 1.0          # full LR on isolated compat scorer
 BATCH_SIZE = 512
 NEG_PER_POS = 1
 PATIENCE = 10
+SCHEDULER_PATIENCE = 5  # ReduceLROnPlateau: epochs without HR@10 improvement before LR halve
+LEARNABLE_EMBEDDINGS = True  # fine-tune item/outfit/user base embeddings during training (v4-style)
 EVAL_EVERY = 1          # evaluate metrics every N epochs (1 = every epoch)
 EARLY_STOP_METRIC = "HR@K"  # early-stop checkpoint selection metric
 TOP_K = 10
@@ -157,7 +167,9 @@ def print_config_summary() -> None:
     print(f"  MIN_USER_INTERACTIONS={MIN_USER_INTERACTIONS}  SPLIT_MODE={SPLIT_MODE}")
     print(f"  MIN_TOP_NEIGHBORS={MIN_TOP_NEIGHBORS}  (None=disabled)")
     print(f"  EPOCHS={EPOCHS}  LR={LR}  WEIGHT_DECAY={WEIGHT_DECAY}  LAMBDA_COMP={LAMBDA_COMP}")
+    print(f"  COMPAT_DETACH_INPUT={COMPAT_DETACH_INPUT}  COMPAT_BPR_MARGIN={COMPAT_BPR_MARGIN}  COMPAT_LR_MULT={COMPAT_LR_MULT}")
     print(f"  BATCH_SIZE={BATCH_SIZE}  NEG_PER_POS={NEG_PER_POS}  PATIENCE={PATIENCE}")
+    print(f"  SCHEDULER_PATIENCE={SCHEDULER_PATIENCE}  LEARNABLE_EMBEDDINGS={LEARNABLE_EMBEDDINGS}")
     print(f"  EVAL_EVERY={EVAL_EVERY}  EARLY_STOP_METRIC={EARLY_STOP_METRIC}")
     print(f"  IMAGE_BATCH_SIZE={IMAGE_BATCH_SIZE}  TEXT_BATCH_SIZE={TEXT_BATCH_SIZE}")
     txt_len = "ad-hoc (BERT max)" if MAX_TEXT_LENGTH is None else str(MAX_TEXT_LENGTH)
