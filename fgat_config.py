@@ -19,12 +19,12 @@ RANDOM_SEED = 42
 MIN_USER_INTERACTIONS = 4
 SPLIT_MODE = "per_user"  # "per_user" | "edge" (edge-level random 80/10/10)
 
-# Item-item top-K sparsification (NB2). None = disabled (full paper Eq.6 graph).
-# Set to 10 later to enable quoc-tran-v4 style neighbor cap.
-MIN_TOP_NEIGHBORS = None
+# Item-item top-K sparsification (NB2 Stage 3C). None = full graph; 10 = top-K cap (v1.3.2).
+MIN_TOP_NEIGHBORS = 10
+FORCE_REBUILD_ITEM_ITEM_MATRIX = True  # True = rebuild item_item_matrix.npz even if cached
 
 # ── Feature extraction (Notebook 1) ───────────────────────────────────
-FORCE_REBUILD_FEATURES = False
+FORCE_REBUILD_FEATURES = True
 IMAGE_BACKBONE = "resnet152"
 TEXT_MODEL_NAME = "bert-base-chinese"
 IMAGE_BATCH_SIZE = 64
@@ -166,7 +166,7 @@ def print_config_summary() -> None:
     """Print a short summary of active hyperparameters."""
     print("── fgat_config ──")
     print(f"  MIN_USER_INTERACTIONS={MIN_USER_INTERACTIONS}  SPLIT_MODE={SPLIT_MODE}")
-    print(f"  MIN_TOP_NEIGHBORS={MIN_TOP_NEIGHBORS}  (None=disabled)")
+    print(f"  MIN_TOP_NEIGHBORS={MIN_TOP_NEIGHBORS}  FORCE_REBUILD_ITEM_ITEM_MATRIX={FORCE_REBUILD_ITEM_ITEM_MATRIX}")
     print(f"  EPOCHS={EPOCHS}  LR={LR}  WEIGHT_DECAY={WEIGHT_DECAY}  LAMBDA_COMP={LAMBDA_COMP}")
     print(f"  COMPAT_DETACH_INPUT={COMPAT_DETACH_INPUT}  COMPAT_BPR_MARGIN={COMPAT_BPR_MARGIN}  COMPAT_LR_MULT={COMPAT_LR_MULT}")
     print(f"  BATCH_SIZE={BATCH_SIZE}  NEG_PER_POS={NEG_PER_POS}  PATIENCE={PATIENCE}")

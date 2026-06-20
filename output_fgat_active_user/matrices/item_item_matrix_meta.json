@@ -1,0 +1,6 @@
+{
+  "min_top_neighbors": 10,
+  "nnz_before_topk": 73314,
+  "nnz_after_topk": 70338,
+  "n_items": 14419
+}
