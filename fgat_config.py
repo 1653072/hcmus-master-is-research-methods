@@ -25,6 +25,20 @@ MIN_TOP_NEIGHBORS = None
 
 # ── Feature extraction (Notebook 1) ───────────────────────────────────
 FORCE_REBUILD_FEATURES = False
+
+# Item fusion training (NB1 Stage 2C) — v1.3.1+: outfit contrastive visual+text → EMBED_DIM
+TRAIN_ITEM_FUSION = True
+FORCE_REBUILD_ITEM_EMBEDDINGS = False   # True = rebuild item_embeddings even if cached
+FORCE_REBUILD_ENTITY_EMBEDDINGS = False # True = rebuild user/outfit embeddings in Stage 2D
+FUSION_VERSION = "outfit_contrastive_v1"
+FUSION_EPOCHS = 20
+FUSION_LR = 1e-3
+FUSION_WEIGHT_DECAY = 1e-5
+FUSION_BATCH_SIZE = 512
+FUSION_PAIRS_PER_OUTFIT = 4   # anchor-positive pairs sampled per outfit per epoch
+FUSION_NEG_PER_PAIR = 1       # random negative items per pair (InfoNCE)
+FUSION_TEMPERATURE = 0.07
+FUSION_DROPOUT = 0.1
 IMAGE_BACKBONE = "resnet152"
 TEXT_MODEL_NAME = "bert-base-chinese"
 IMAGE_BATCH_SIZE = 64
@@ -175,3 +189,6 @@ def print_config_summary() -> None:
     print(f"  IMAGE_BATCH_SIZE={IMAGE_BATCH_SIZE}  TEXT_BATCH_SIZE={TEXT_BATCH_SIZE}")
     txt_len = "ad-hoc (BERT max)" if MAX_TEXT_LENGTH is None else str(MAX_TEXT_LENGTH)
     print(f"  MAX_TEXT_LENGTH={txt_len}  FORCE_REBUILD_FEATURES={FORCE_REBUILD_FEATURES}")
+    print(f"  TRAIN_ITEM_FUSION={TRAIN_ITEM_FUSION}  FUSION_VERSION={FUSION_VERSION}")
+    print(f"  FORCE_REBUILD_ITEM_EMBEDDINGS={FORCE_REBUILD_ITEM_EMBEDDINGS}  FORCE_REBUILD_ENTITY_EMBEDDINGS={FORCE_REBUILD_ENTITY_EMBEDDINGS}")
+    print(f"  FUSION_EPOCHS={FUSION_EPOCHS}  FUSION_LR={FUSION_LR}  FUSION_BATCH_SIZE={FUSION_BATCH_SIZE}")
