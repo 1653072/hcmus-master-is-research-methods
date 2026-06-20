@@ -39,17 +39,17 @@ TEXT_DIM = 768
 # ── Model ─────────────────────────────────────────────────────────────
 EMBED_DIM = 64
 NUM_HEADS = 4
-DROPOUT = 0.4
+DROPOUT = 0.3
 MAX_OUTFIT_ITEMS_FOR_COMP = 10
 
 # ── Training (Notebook 3) ─────────────────────────────────────────────
-# v1.2 tuning: stronger regularization + more train/eval negatives (re-run NB3 only).
-EPOCHS = 40
+# v1.3 baseline (kimnguyen-quoctran-v1.3): v1.1-style reg + λ=0.3 compat + 50 eval negs.
+EPOCHS = 50
 LR = 0.001
-WEIGHT_DECAY = 1e-4
+WEIGHT_DECAY = 1e-5
 # Multi-task weight: val_total = val_rec + LAMBDA_COMP * val_comp.
 # Early-stop on HR@10 / NDCG — not val_total (compat BPR scale is separate from ranking).
-LAMBDA_COMP = 0.15
+LAMBDA_COMP = 0.3
 
 # Compatibility: scored on base item_embs only (NOT GAT item_upd).
 # Rec reshapes item_upd every epoch → blending GAT into compat caused train↓ val↑ collapse.
@@ -57,14 +57,14 @@ COMPAT_DETACH_INPUT = True    # compat trains CompatibilityScorer only (no emb/G
 COMPAT_BPR_MARGIN = 0.0       # standard BPR; margin=0.25 inflated val loss when margin went negative
 COMPAT_LR_MULT = 1.0          # full LR on isolated compat scorer
 BATCH_SIZE = 512
-NEG_PER_POS = 5
+NEG_PER_POS = 3
 PATIENCE = 10
 SCHEDULER_PATIENCE = 5  # ReduceLROnPlateau: epochs without HR@10 improvement before LR halve
 LEARNABLE_EMBEDDINGS = True  # fine-tune item/outfit/user base embeddings during training (v4-style)
 EVAL_EVERY = 1          # evaluate metrics every N epochs (1 = every epoch)
 EARLY_STOP_METRIC = "HR@K"  # early-stop checkpoint selection metric
 TOP_K = 10
-EVAL_NEG_SAMPLES = 99   # harder eval (v1.1 used 50; HR/NDCG not directly comparable)
+EVAL_NEG_SAMPLES = 50   # v1.3 tuning protocol (comparable to v1.1; use 99 for final hard eval)
 
 # ── Paths (resolved at runtime) ───────────────────────────────────────
 KAGGLE_DATA = Path("/kaggle/input/datasets/kiettruonglifeez/recsys-fgat")
