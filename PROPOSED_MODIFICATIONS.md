@@ -2,7 +2,7 @@
 
 ## 4.1 Introduction and Design Rationale
 
-This section documents how the **Lightweight H-HFGAT** implementation adapts the author’s Hierarchical Hybrid Fashion Graph Attention Network for runs on limited memory (personal machine, cloud runtime, or competition platform). Sections 4.3–4.8 describe changes already in the codebase. Section 4.9 lists improvements not yet implemented. The focus is on what was changed, why it was changed, and how each part behaves—not on experimental scores.
+This section documents how the **Lightweight H-HFGAT** implementation adapts the author’s Hierarchical Hybrid Fashion Graph Attention Network for runs on limited memory (personal machine, cloud runtime, or competition platform). Sections 4.3–4.8 describe changes already in the codebase. Section 4.9 lists improvements not yet implemented. The focus is on what was changed, why it was changed, and how each part behaves.
 
 ## 4.2 Baseline: Author H-HFGAT versus Lightweight Implementation
 
