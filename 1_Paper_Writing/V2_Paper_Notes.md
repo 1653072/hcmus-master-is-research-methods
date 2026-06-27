@@ -15,8 +15,6 @@ Chúng tôi xây dựng **Lightweight FGAT** dựa trên khung đó. Điểm kh�
 
 ---
 
-
-
 ### 3.1 Tổng quan
 
 Về cấu trúc đồ thị, mô hình tổ chức ba lớp nút user, outfit và item. Ba nhóm quan hệ chính là user-outfit (lịch sử tương tác), outfit-item (thành phần của outfit) và item-item (các item xuất hiện chung trong cùng outfit, có trọng số theo mức đồng xuất hiện category).
@@ -31,21 +29,15 @@ Về hình minh họa, cấu trúc tổng thể được tóm tắt ở Hình 3.
 
 ---
 
-
-
 ### 3.2 Khởi tạo embedding item
 
-Về đặc trưng đa phương thức cho item, mỗi item có ảnh và tiêu đề tiếng Trung. Chúng tôi dùng ResNet-152 cho ảnh và BERT Chinese cho văn bản, cùng họ mô hình với H-HFGAT. Vector visual và vector text được chiếu về cùng không gian 64 chiều, ghép nối, rồi qua một lớp tuyến tính để thu được embedding item ban đầu h_i. Ở giai đoạn hiện tại lớp fusion này **chưa được huấn luyện** (giống triển khai tác giả). Trọng số fusion cố định sau khởi tạo ngẫu nhiên.
+Về đặc trưng đa phương thức cho item, mỗi item có ảnh và tiêu đề tiếng Trung. Chúng tôi sử dụng ResNet-152 cho ảnh và BERT Chinese cho văn bản, giống mô hình H-HFGAT. Vector visual và vector text được chiếu về cùng không gian 64 chiều, ghép nối, rồi qua một lớp tuyến tính để thu được embedding item ban đầu, gọi là *h_i*. Ở giai đoạn hiện tại lớp fusion này chưa được huấn luyện (giống cách H-HFGAT đã triển khai). Trọng số fusion được cố định sau khi khởi tạo ngẫu nhiên.
 
-Về embedding user và outfit, user và outfit có embedding theo ID, khởi tạo ngẫu nhiên trong khoảng nhỏ quanh 0. Khác H-HFGAT (chỉ cố định tensor và huấn luyện phần GAT), Lightweight FGAT **cho phép cập nhật** embedding user, outfit và item trong quá trình tối ưu. Lý do là vector ID khởi tạo ngẫu nhiên cần thích nghi cùng lan truyền đồ thị. Chỉ huấn luyện lớp GAT mà giữ embedding đóng băng thường kém hơn trên split theo từng user.
+Về embedding user và outfit, user và outfit có embedding theo ID, khởi tạo ngẫu nhiên trong khoảng nhỏ quanh giá trị 0. Khác H-HFGAT (chỉ cố định tensor và huấn luyện phần GAT), Lightweight FGAT cho phép cập nhật embedding user, outfit và item trong quá trình tối ưu. Lý do là vector ID khởi tạo ngẫu nhiên cần thích nghi cùng lan truyền đồ thị. Nếu giữ embedding theo ID cố định và chỉ học các lớp GAT, mô hình khó bắt đủ sở thích riêng của từng user, nên chất lượng gợi ý thường thấp hơn so với cập nhật đồng thời.
 
 Về tách giai đoạn trích xuất và huấn luyện đồ thị, ResNet và BERT chạy một lần (hoặc đọc từ cache), tạo vector cố định cho mỗi item. Các epoch sau chỉ cập nhật embedding và tham số GAT. Cách này tránh lặp lại chi phí trích xuất nặng mỗi lần thử hyperparameter. Pipeline cache và batch được mô tả thêm ở Mục 3.6.
 
-Về giới hạn đã biết (không thuộc phạm vi huấn luyện hiện tại), huấn luyện lớp fusion visual-text là hướng cải tiến dự kiến, chưa triển khai trong phiên bản đang báo cáo.
-
 ---
-
-
 
 ### 3.3 Đồ thị item theo category và lan truyền attention
 
@@ -55,9 +47,7 @@ Tiểu mục này gồm hai phần: cách gán trọng số cạnh item-item (hy
 
 H-HFGAT dùng thống kê đồng xuất hiện category trong toàn bộ outfit để đo mức “thường đi cùng nhau” giữa hai loại trang phục (ví dụ áo và quần). Với hai category c_i và c_j, trọng số thô được chuẩn hóa theo số lần xuất hiện của c_j:
 
-
 w(c_i, c_j) = \frac{co(c_i, c_j)}{\sum_{c_k} co(c_i, c_k) / o(c_k)}
-
 
 Trong đó co(c_i, c_j) là số outfit chứa cả hai category, o(c_j) là tổng số lần category c_j xuất hiện. Sau đó các giá trị được **min-max chuẩn hóa** trên toàn tập cặp category để đưa về khoảng thống nhất. Nếu hai category không có thống kê liên kết, chúng tôi gán trọng số mặc định nhỏ (0,1 trong triển khai).
 
@@ -73,33 +63,23 @@ Hai loại cạnh còn lại dùng trọng số 1: outfit-item (chỉ ghi member
 | user-outfit (khi lan truyền) | 1,0, chỉ tập train                  | Gom vector outfit thành user, tránh rò rỉ |
 
 
-
-
 #### 3.3.2 Attention đa đầu trên tầng item
 
 Trên mỗi subgraph item, Lightweight FGAT áp dụng graph attention đa đầu (4 heads trong cấu hình hiện tại). Hệ số attention thô giữa item i và láng giềng j:
 
-
 e_{ij} = \mathrm{LeakyReLU}\left(\mathbf{a}^T [W h_i  W h_j]\right)
-
 
 So với H-HFGAT, chúng tôi chuẩn hóa softmax theo **từng nút đích** (per-destination), không gom softmax toàn cục trên mọi cạnh. Mỗi item i có phân phối trọng số riêng trên tập láng giềng N_i:
 
-
 \alpha_{ij} = \frac{\exp(e_{ij})}{\sum_{k \in N_i} \exp(e_{ik})}
-
 
 Trọng số cạnh category w_{ij} được đưa vào quá trình tổng hợp thông điệp. Bản cập nhật residual:
 
-
 h_i^{*} = h_i + \mathrm{LeakyReLU}\left(\sum_{j \in N_i} \alpha_{ij} W_1 (h_i \odot h_j)\right)
-
 
 Sau lớp item áp dụng dropout và chuẩn hóa L2 trên đầu ra. Per-destination softmax phù hợp với định nghĩa attention trên đồ thị: mỗi nút chỉ phân bổ “sự chú ý” trên hàng xóm của chính nó.
 
 ---
-
-
 
 ### 3.4 Tổng hợp outfit và user
 
@@ -109,14 +89,10 @@ Sau khi có h_i^{*}, mô hình lan truyền lên outfit rồi lên user theo hai
 
 Gọi N_o là tập item thuộc outfit o. Attention từ item đã cập nhật h_i^{*} và embedding outfit ban đầu h_o:
 
-
 e_{io} = \mathrm{LeakyReLU}\left(\mathbf{a}^T [W h_i^{*}  W h_o]\right), \quad
 \alpha_{io} = \frac{\exp(e_{io})}{\sum_{j \in N_o} \exp(e_{jo})}
 
-
-
 h_o^{*} = h_o + \mathrm{LeakyReLU}\left(\sum_{i \in N_o} \alpha_{io} W_2 h_i^{*}\right)
-
 
 Vector h_o^{*} tích hợp tín hiệu compatibility ở mức item (item nào đóng góp mạnh vào outfit).
 
@@ -124,20 +100,14 @@ Vector h_o^{*} tích hợp tín hiệu compatibility ở mức item (item nào �
 
 Gọi N_u là tập outfit user u đã tương tác. Attention và cập nhật:
 
-
 e_{ou} = \mathrm{LeakyReLU}\left(\mathbf{a}^T [W h_o^{*}  W h_u]\right), \quad
 \alpha_{ou} = \frac{\exp(e_{ou})}{\sum_{j \in N_u} \exp(e_{ju})}
 
-
-
 h_u^{*} = h_u + \mathrm{LeakyReLU}\left(\sum_{o \in N_u} \alpha_{ou} W_3 h_o^{*}\right)
-
 
 Về ràng buộc train-only, khi huấn luyện và khi chạy forward trên validation, N_u **chỉ gồm outfit thuộc tập train** của user đó. Tương tác validation và test không tham gia lan truyền lên h_u^{*} và h_o^{*}. Đồ thị đầy đủ có thể lưu mọi cạnh user-outfit để tiện quản lý dữ liệu, nhưng message passing bỏ qua cạnh ngoài train. Cách này ngăn mô hình “nhìn thấy” sở thích hold-out trong khi cập nhật biểu diễn, khác với thiết lập H-HFGAT dùng toàn bộ cạnh khi train.
 
 ---
-
-
 
 ### 3.5 Mục tiêu huấn luyện và thay đổi giao thức
 
@@ -147,10 +117,8 @@ Lightweight FGAT huấn luyện đồng thời gợi ý và compatibility. Tiể
 
 H-HFGAT dùng tích vô hướng thô giữa h_u^{*} và h_o^{*}. Lightweight FGAT **chuẩn hóa L2** hai vector trước khi tính tích vô hướng:
 
-
 y_{uo} = \hat{h}_u^{*\top} \hat{h}_o^{*}, \quad
 \hat{h} = \frac{h}{h_2}
-
 
 Điểm số mang tính cosine-style, giúp BPR ổn định hơn khi norm vector khác nhau giữa user.
 
@@ -166,21 +134,15 @@ Huấn luyện compatibility theo Fill In The Blank: mỗi outfit đúng đi v�
 
 Cả recommendation và compatibility đều dùng **Bayesian Personalized Ranking (BPR)**. Với cặp dương-âm (u, o, o') cho gợi ý:
 
-
 \mathcal{L}*{rec} = -\sum \log \sigma(y*{uo} - y_{uo'})
-
 
 Với cặp outfit dương-âm (o, o') cho compatibility:
 
-
 \mathcal{L}*{comp} = -\sum \log \sigma(s_o - s*{o'})
-
 
 Hàm mục tiêu chung:
 
-
 \mathcal{L} = \mathcal{L}*{rec} + \lambda \mathcal{L}*{comp}
-
 
 Trong thí nghiệm báo cáo, \lambda = 0{,}3. Trọng số này cân bằng xếp hạng và compatibility. Checkpoint tốt nhất chọn theo **Hit Rate@10** trên validation, không chọn theo tổng loss validation.
 
@@ -201,8 +163,6 @@ Trong thí nghiệm báo cáo, \lambda = 0{,}3. Trọng số này cân bằng x�
 Các thay đổi trên nhằm đánh giá gợi ý nghiêm hơn và huấn luyện đa nhiệm vụ ổn định hơn, không thay đổi backbone ResNet/BERT.
 
 ---
-
-
 
 ### 3.6 Pipeline hiệu quả
 
@@ -232,8 +192,6 @@ Về huấn luyện, batch size 512, mỗi outfit dương có ba outfit âm tron
 Về hướng cải tiến pipeline (chưa triển khai), cắt tỉa láng giềng item-item theo top-K và huấn luyện lớp fusion vẫn là đề xuất tương lai, không nằm trong phạm vi mô tả chi tiết ở đây.
 
 ---
-
-
 
 ## Ghi chú biên tập
 
