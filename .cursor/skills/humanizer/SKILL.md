@@ -26,7 +26,7 @@ When invoked automatically from `write-lncs-paper` Step 8:
 
 1. Receive draft paper section(s) already LNCS-structured.
 2. Run Process and Output below (draft → audit → final).
-3. **Re-check hard constraints** from `write-lncs-paper`: no `—` or `–`, facts/numbers unchanged, acronym and citation format preserved.
+3. **Re-check hard constraints** from `write-lncs-paper`: no `—` or `–`, facts/numbers unchanged, acronym and citation format preserved, topic-led openers (no `**Label.**` body fragments), notation only when symbols recur.
 4. Return **final rewrite only** for file write or chat (omit audit bullets unless user asks).
 
 ---
@@ -465,9 +465,9 @@ Before returning the final rewrite, scan it for `—` and `–`. Any hit means t
 
 ### 29. Fragmented Headers
 
-**Signs to watch:** A heading followed by a one-line paragraph that simply restates the heading before the real content begins.
+**Signs to watch:** A heading followed by a one-line paragraph that simply restates the heading before the real content begins. In body prose (especially LNCS method sections), the same tell appears as a bold label plus period before the real sentence: `**Overall pipeline.** Raw data...`
 
-**Problem:** LLMs often add a generic sentence after a heading as a rhetorical warm-up. It usually adds nothing and makes the prose feel padded.
+**Problem:** LLMs often add a generic sentence after a heading as a rhetorical warm-up, or use slide-style labels in running text. It usually adds nothing and makes the prose feel padded.
 
 **Before:**
 > ## Performance
@@ -476,10 +476,18 @@ Before returning the final rewrite, scan it for `—` and `–`. Any hit means t
 >
 > When users hit a slow page, they leave.
 
+**Before (inline label fragment):**
+> **Overall pipeline.** Raw data includes user-outfit interactions and item images.
+
 **After:**
 > ## Performance
 >
 > When users hit a slow page, they leave.
+
+**After (inline label fragment):**
+> Regarding the overall pipeline, raw data includes user-outfit interactions and item images.
+
+Exception: LNCS table and figure captions (`**Table 1.**`, `**Fig. 2.**`) keep the caption form.
 
 
 ### 30. Diff-Anchored Writing

@@ -128,9 +128,11 @@ Keep **at most two numbered heading levels** in both languages.
 - No marketing hype without evidence
 - No variable names, file paths, or notebook mentions in prose
 - Avoid semicolon-heavy sentences
-- **Never use em dash (`—`)** in paper prose (see Forbidden punctuation above)
+- **No em dash (`—`)** in paper prose (see Forbidden punctuation)
+- **Topic-led openers:** `Về [chủ đề], ...` (not `**Nhãn.** Câu tiếp theo.`)
 - Define acronyms once: "Graph Attention Network (GAT)"
 - Cross-refs: "Sect. 4", "Fig. 2", "Table 1"
+- Topic-led openers: "Regarding [topic], ..." or "In terms of [topic], ..." (not `**Label.** Next sentence.`)
 
 #### Vietnamese (working draft)
 
@@ -144,6 +146,30 @@ Keep **at most two numbered heading levels** in both languages.
 - Giữ thuật ngữ kỹ thuật tiếng Anh khi phổ biến (Hit Rate@10, NDCG, Fill In The Blank, graph attention)
 - Định nghĩa viết tắt lần đầu: "mạng Graph Attention (GAT)"
 - Tham chiếu: "Mục 4", "Hình 2", "Bảng 1"
+
+#### Topic-led paragraph openers (body prose)
+
+Avoid inline fragment headers where a bold label is followed by a period and a new sentence, e.g. `**Luồng xử lý tổng thể.** Dữ liệu thô...` or `**Overall pipeline.** Raw data...`. This pattern reads like a slide outline, not LNCS prose.
+
+Weave the topic into the opening sentence instead:
+
+| Avoid | Vietnamese | English |
+|-------|------------|---------|
+| `**Label.** Next sentence.` | `Về [chủ đề], [nội dung].` | `Regarding [topic], [content].` or `In terms of [topic], [content].` |
+
+Use numbered section headings (`### 3.1`) for structure. Use topic-led openers for paragraphs *within* a section. Table and figure captions (`**Table 1.**`, `**Bảng 1.**`) keep the LNCS caption form.
+
+#### Formal notation discipline
+
+Do not open with heavy set notation (e.g. "Let \(G = (V, E)\) with \(V = V_U \cup V_O \cup V_I\)") if those symbols are not reused in later equations or cross-references. Describe the graph in plain prose (node types, edge types, roles). Introduce symbols only when they appear in numbered equations or are cited multiple times in the same section.
+
+#### Method naming (HFGAT / Lightweight repo)
+
+When drafting Sect. 3 for this project, read [project-context.md](project-context.md):
+
+- Author baseline: **H-HFGAT** (Hybrid-Hierarchical Fashion Graph Attention Network). Define once at the start of Sect. 3.
+- Our method: **Lightweight FGAT**.
+- Comparisons: **H-HFGAT** vs **Lightweight FGAT**. Avoid "FGAT gốc", "original FGAT", or vague "FGAT" when the baseline is meant.
 
 ### Step 4: Vietnamese → English pass
 

@@ -22,6 +22,7 @@ From the main humanizer skill, these still apply to Vietnamese academic drafts:
 | 24 | Excessive hedging | "có thể có khả năng", "dường như như là" |
 | 20 | Chatbot artifacts | "Hy vọng điều này hữu ích", "Hãy cho tôi biết nếu bạn cần" |
 | 28 | Signposting | "Hãy cùng tìm hiểu", "Trong phần này chúng ta sẽ" |
+| 29 | Fragmented headers | Heading plus one-line restatement; also `**Nhãn.**` body fragments (use `Về [chủ đề], ...`) |
 | 25 | Generic conclusions | "Tương lai hứa hẹn nhiều điều tích cực" |
 
 ---
@@ -30,6 +31,8 @@ From the main humanizer skill, these still apply to Vietnamese academic drafts:
 
 Watch and rewrite:
 
+- **Inline bold fragment headers:** `**Luồng xử lý tổng thể.** Dữ liệu thô...` → `Về luồng xử lý tổng thể, dữ liệu thô...` (English: `Regarding the overall pipeline, raw data...` or `In terms of the overall pipeline, raw data...`). Exception: table/figure captions (`**Bảng 1.**`, `**Table 1.**`) keep LNCS form.
+- **Unused formal notation:** `Gọi G = (V, E) với V = V_U ∪ V_O ∪ V_I` when \(V_U\), \(V_O\), \(V_I\) never appear again. Prefer plain prose unless symbols recur in equations.
 - **Stacked intro formulas:** "Trong thời đại công nghệ 4.0...", "Trong bối cảnh phát triển mạnh mẽ của trí tuệ nhân tạo..."
 - **Over-polished parallelism:** Three clauses with identical grammar and length
 - **Translationese:** Calques from English ("đóng góp vào", "đóng vai trò then chốt", "nhấn mạnh tầm quan trọng")
