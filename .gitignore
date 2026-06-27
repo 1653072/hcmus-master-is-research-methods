@@ -221,3 +221,4 @@ __marimo__/
 .streamlit/secrets.toml
 
 hfgat_rewrite_validate/Dataset/fashion_item_images/*
+output_fgat_active_user/
