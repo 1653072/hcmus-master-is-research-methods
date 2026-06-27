@@ -49,35 +49,39 @@ H-HFGAT dùng thống kê đồng xuất hiện category trong toàn bộ outfit
 
 w(c_i, c_j) = \frac{co(c_i, c_j)}{\sum_{c_k} co(c_i, c_k) / o(c_k)}
 
-Trong đó co(c_i, c_j) là số outfit chứa cả hai category, o(c_j) là tổng số lần category c_j xuất hiện. Sau đó các giá trị được **min-max chuẩn hóa** trên toàn tập cặp category để đưa về khoảng thống nhất. Nếu hai category không có thống kê liên kết, chúng tôi gán trọng số mặc định nhỏ (0,1 trong triển khai).
+Trong đó co(c_i, c_j) là số outfit chứa cả hai category, o(c_j) là tổng số lần category c_j xuất hiện. Sau đó các giá trị được min-max chuẩn hóa trên toàn tập cặp category để đưa về khoảng thống nhất. Nếu hai category không có thống kê liên kết, chúng tôi gán trọng số mặc định nhỏ (0,1 trong triển khai).
 
-Khi xây subgraph item cho từng outfit, mỗi cặp item (i, j) nhận trọng số cạnh bằng trọng số giữa category tương ứng. Item thuộc category hay kết hợp với nhau sẽ có cạnh mạnh hơn. Đây là nhánh **có trọng số theo thống kê thời trang** trong thiết kế hybrid.
+Khi xây subgraph item cho từng outfit, mỗi cặp item (i, j) nhận trọng số cạnh bằng trọng số giữa category tương ứng. Item thuộc category hay kết hợp với nhau sẽ có cạnh mạnh hơn. Đây là nhánh có trọng số theo thống kê thời trang trong thiết kế hybrid.
 
-Hai loại cạnh còn lại dùng trọng số 1: outfit-item (chỉ ghi membership), và user-outfit (chỉ ghi tương tác). Ba kiểu cạnh phục vụ ba vai trò khác nhau, đó là lý do gọi là **hybrid edge weighting**.
+Hai loại cạnh còn lại dùng trọng số 1: outfit-item (chỉ ghi membership), và user-outfit (chỉ ghi tương tác). Ba kiểu cạnh phục vụ ba vai trò khác nhau, đó là lý do gọi là hybrid edge weighting.
 
 
 | Loại cạnh                    | Nguồn trọng số                      | Vai trò                                   |
 | ---------------------------- | ----------------------------------- | ----------------------------------------- |
-| item-item                    | Đồng xuất hiện category (chuẩn hóa) | Mã hóa quan hệ thời trang giữa item       |
+| item-item                    | Đồng xuất hiện category (chuẩn hóa) | Mã hóa quan hệ thời trang giữa các item   |
 | outfit-item                  | 1,0                                 | Gom vector item thành outfit              |
 | user-outfit (khi lan truyền) | 1,0, chỉ tập train                  | Gom vector outfit thành user, tránh rò rỉ |
 
 
 #### 3.3.2 Attention đa đầu trên tầng item
 
-Trên mỗi subgraph item, Lightweight FGAT áp dụng graph attention đa đầu (4 heads trong cấu hình hiện tại). Hệ số attention thô giữa item i và láng giềng j:
+Trên subgraph item của mỗi outfit, Lightweight FGAT áp dụng graph attention đa đầu (4 heads trong cấu hình hiện tại). Dưới đây chúng tôi ghi công thức cho một head; mỗi head có bộ tham số riêng, rồi ghép đầu ra trước dropout và chuẩn hóa L2.
 
-e_{ij} = \mathrm{LeakyReLU}\left(\mathbf{a}^T [W h_i  W h_j]\right)
+Gọi h_i \in \mathbb{R}^d là embedding ban đầu của item i, và N_i là tập các item láng giềng của i trong subgraph (các item cùng outfit, nối với i qua cạnh item-item). Với ma trận học W, vector tham số attention \mathbf{a}, hệ số attention thô giữa i và láng giềng j \in N_i là
 
-So với H-HFGAT, chúng tôi chuẩn hóa softmax theo **từng nút đích** (per-destination), không gom softmax toàn cục trên mọi cạnh. Mỗi item i có phân phối trọng số riêng trên tập láng giềng N_i:
+e_{ij} = \mathrm{LeakyReLU}\left(\mathbf{a}^{\top} \left[ W h_i  W h_j \right]\right),
 
-\alpha_{ij} = \frac{\exp(e_{ij})}{\sum_{k \in N_i} \exp(e_{ik})}
+trong đó  là phép nối hai vector.
 
-Trọng số cạnh category w_{ij} được đưa vào quá trình tổng hợp thông điệp. Bản cập nhật residual:
+So với H-HFGAT, chúng tôi chuẩn hóa softmax theo từng nút đích (per-destination): mỗi item i chỉ chuẩn hóa trên láng giềng của chính nó, không gom mọi cạnh trong subgraph vào một softmax chung. Trọng số attention là
 
-h_i^{*} = h_i + \mathrm{LeakyReLU}\left(\sum_{j \in N_i} \alpha_{ij} W_1 (h_i \odot h_j)\right)
+\alpha_{ij} = \frac{\exp(e_{ij})}{\sum_{k \in N_i} \exp(e_{ik})}.
 
-Sau lớp item áp dụng dropout và chuẩn hóa L2 trên đầu ra. Per-destination softmax phù hợp với định nghĩa attention trên đồ thị: mỗi nút chỉ phân bổ “sự chú ý” trên hàng xóm của chính nó.
+Trọng số cạnh category w_{ij} (Mục 3.3.1) được nhân vào thông điệp khi tổng hợp. Embedding item sau một lớp attention có dạng residual
+
+h_i^{*} = h_i + \mathrm{LeakyReLU}\left(\sum_{j \in N_i} \alpha_{ij} W_1 \left(h_i \odot h_j\right)\right),
+
+trong đó \odot là tích Hadamard (nhân từng phần tử), W_1 là ma trận học ở bước tổng hợp. Sau lớp item, mô hình áp dụng dropout và chuẩn hóa L2 trên đầu ra. Cách chuẩn hóa per-destination phù hợp với attention trên đồ thị: mỗi nút chỉ phân bổ trọng số trên hàng xóm của chính nó.
 
 ---
 
@@ -87,25 +91,35 @@ Sau khi có h_i^{*}, mô hình lan truyền lên outfit rồi lên user theo hai
 
 #### 3.4.1 Tầng outfit
 
-Gọi N_o là tập item thuộc outfit o. Attention từ item đã cập nhật h_i^{*} và embedding outfit ban đầu h_o:
+Gọi N_o là tập các item thuộc outfit o, h_o là embedding ban đầu của outfit, và h_i^{*} là embedding item sau lớp attention (Mục 3.3.2). Với ma trận học W và vector tham số attention \mathbf{a}, hệ số attention thô giữa item i \in N_o và outfit o là
 
-e_{io} = \mathrm{LeakyReLU}\left(\mathbf{a}^T [W h_i^{*}  W h_o]\right), \quad
-\alpha_{io} = \frac{\exp(e_{io})}{\sum_{j \in N_o} \exp(e_{jo})}
+e_{io} = \mathrm{LeakyReLU}\left(\mathbf{a}^{\top} \left[ W h_i^{*}  W h_o \right]\right).
 
-h_o^{*} = h_o + \mathrm{LeakyReLU}\left(\sum_{i \in N_o} \alpha_{io} W_2 h_i^{*}\right)
+Trọng số attention được chuẩn hóa per-destination trên các item trong cùng outfit:
 
-Vector h_o^{*} tích hợp tín hiệu compatibility ở mức item (item nào đóng góp mạnh vào outfit).
+\alpha_{io} = \frac{\exp(e_{io})}{\sum_{j \in N_o} \exp(e_{jo})}.
+
+Embedding outfit sau bước tổng hợp có dạng residual
+
+h_o^{*} = h_o + \mathrm{LeakyReLU}\left(\sum_{i \in N_o} \alpha_{io} W_2 h_i^{*}\right).
+
+Vector h_o^{*} gom tín hiệu compatibility ở mức item: item nào được attention cao hơn sẽ đóng góp mạnh hơn vào biểu diễn outfit.
 
 #### 3.4.2 Tầng user
 
-Gọi N_u là tập outfit user u đã tương tác. Attention và cập nhật:
+Gọi N_u là tập các outfit mà user u đã tương tác, h_u là embedding ban đầu của user, và h_o^{*} là embedding outfit sau Mục 3.4.1. Hệ số attention thô giữa outfit o \in N_u và user u là
 
-e_{ou} = \mathrm{LeakyReLU}\left(\mathbf{a}^T [W h_o^{*}  W h_u]\right), \quad
-\alpha_{ou} = \frac{\exp(e_{ou})}{\sum_{j \in N_u} \exp(e_{ju})}
+e_{ou} = \mathrm{LeakyReLU}\left(\mathbf{a}^{\top} \left[ W h_o^{*}  W h_u \right]\right).
 
-h_u^{*} = h_u + \mathrm{LeakyReLU}\left(\sum_{o \in N_u} \alpha_{ou} W_3 h_o^{*}\right)
+Trọng số attention được chuẩn hóa per-destination trên các outfit của cùng user:
 
-Về ràng buộc train-only, khi huấn luyện và khi chạy forward trên validation, N_u **chỉ gồm outfit thuộc tập train** của user đó. Tương tác validation và test không tham gia lan truyền lên h_u^{*} và h_o^{*}. Đồ thị đầy đủ có thể lưu mọi cạnh user-outfit để tiện quản lý dữ liệu, nhưng message passing bỏ qua cạnh ngoài train. Cách này ngăn mô hình “nhìn thấy” sở thích hold-out trong khi cập nhật biểu diễn, khác với thiết lập H-HFGAT dùng toàn bộ cạnh khi train.
+\alpha_{ou} = \frac{\exp(e_{ou})}{\sum_{j \in N_u} \exp(e_{ju})}.
+
+Embedding user sau bước tổng hợp có dạng residual
+
+h_u^{*} = h_u + \mathrm{LeakyReLU}\left(\sum_{o \in N_u} \alpha_{ou} W_3 h_o^{*}\right).
+
+Về ràng buộc train-only, khi huấn luyện và khi chạy forward trên validation, N_u chỉ gồm outfit thuộc tập train của user đó. Tương tác validation và test không tham gia lan truyền lên h_u^{*} và h_o^{*}. Đồ thị đầy đủ có thể lưu mọi cạnh user-outfit để tiện quản lý dữ liệu, nhưng message passing bỏ qua cạnh ngoài train. Cách này ngăn mô hình “nhìn thấy” sở thích hold-out trong khi cập nhật biểu diễn, khác với thiết lập H-HFGAT dùng toàn bộ cạnh khi train.
 
 ---
 
@@ -126,7 +140,7 @@ y_{uo} = \hat{h}_u^{*\top} \hat{h}_o^{*}, \quad
 
 Compatibility đánh giá outfit có hợp lý về mặt kết hợp item hay không. Thay vì mô tả đầy đủ ma trận attention A và compatibility C như H-HFGAT, Lightweight FGAT dùng **CompatibilityScorer** gọn hơn trên tensor item của outfit.
 
-Về tách nhánh compatibility (decoupled compatibility), điểm compatibility tính trên **embedding item gốc** h_i (trước GAT), không dùng h_i^{*}. Gradient từ loss compatibility **không kéo** embedding gốc và không kéo đường lan truyền item GAT khi chế độ tách nhánh bật. CompatibilityScorer vẫn học trọng số riêng. Mục tiêu là tránh hai loss cùng kéo geometry item theo hai hướng đối nghịch.
+Về tách nhánh compatibility (decoupled compatibility), điểm compatibility tính trên **embedding item gốc** h_i (trước GAT), không dùng h_i^{*}. Gradient từ loss compatibility không cập nhật embedding item gốc và không lan ngược qua đường lan truyền item GAT; chỉ **CompatibilityScorer** được học qua nhánh này. Cách tách này tránh hai loss cùng kéo geometry item theo hai hướng đối nghịch.
 
 Huấn luyện compatibility theo Fill In The Blank: mỗi outfit đúng đi với ba outfit sai, mỗi outfit sai thay một item bằng item khác outfit. Outfit đúng phải có điểm cao hơn outfit sai.
 
@@ -134,15 +148,15 @@ Huấn luyện compatibility theo Fill In The Blank: mỗi outfit đúng đi v�
 
 Cả recommendation và compatibility đều dùng **Bayesian Personalized Ranking (BPR)**. Với cặp dương-âm (u, o, o') cho gợi ý:
 
-\mathcal{L}*{rec} = -\sum \log \sigma(y*{uo} - y_{uo'})
+\mathcal{L}*{\mathrm{rec}} = -\sum \log \sigma\left(y*{uo} - y_{uo'}\right)
 
 Với cặp outfit dương-âm (o, o') cho compatibility:
 
-\mathcal{L}*{comp} = -\sum \log \sigma(s_o - s*{o'})
+\mathcal{L}*{\mathrm{comp}} = -\sum \log \sigma\left(s_o - s*{o'}\right)
 
 Hàm mục tiêu chung:
 
-\mathcal{L} = \mathcal{L}*{rec} + \lambda \mathcal{L}*{comp}
+\mathcal{L} = \mathcal{L}*{\mathrm{rec}} + \lambda \mathcal{L}*{\mathrm{comp}}
 
 Trong thí nghiệm báo cáo, \lambda = 0{,}3. Trọng số này cân bằng xếp hạng và compatibility. Checkpoint tốt nhất chọn theo **Hit Rate@10** trên validation, không chọn theo tổng loss validation.
 
@@ -166,30 +180,17 @@ Các thay đổi trên nhằm đánh giá gợi ý nghiêm hơn và huấn luy�
 
 ### 3.6 Pipeline hiệu quả
 
-Lightweight FGAT không chỉ đổi công thức mô hình mà còn tổ chức pipeline để giảm chi phí lặp thí nghiệm. Bảng 1 tóm tắt các bước chính.
+Ngoài phần công thức, chúng tôi sắp xếp Lightweight FGAT theo pipeline tuần tự từ dữ liệu thô đến đánh giá hold-out, để không phải lặp lại các bước tốn kém mỗi lần chỉnh hyperparameter.
 
-**Bảng 1.** Các bước pipeline Lightweight FGAT
+Chúng tôi bắt đầu bằng các dữ liệu user-outfit thô, lọc sub-graph trước khi đưa vào mô hình. User phải có ít nhất bốn tương tác để chia train, validation và test theo từng người, đủ dày cho lan truyền ở tầng user, đồng thời tạo bộ Fill In The Blank cho compatibility. Lọc cascade bỏ outfit và item không đủ điều kiện. Các item bị thiếu ảnh cũng bị loại để giảm dữ liệu nhiễu. So với corpus gốc, đồ thị sau bước này nhỏ hơn đáng kể.
 
+ResNet-152 và BERT Chinese trích xuất đặc trưng ảnh và tiêu đề item (batch 64 ảnh, batch 128 văn bản). Visual vectors và text vectors được lưu cache sau lần chạy đầu. Các lần sau bỏ qua hai bước xử lý này nếu dữ liệu cache còn dùng được. Đây chỉ là tối ưu thực thi, không đổi cách định nghĩa đặc trưng ở Mục 3.2.
 
-| Bước                    | Đầu vào                      | Đầu ra                                 | Ghi chú                                                                         |
-| ----------------------- | ---------------------------- | -------------------------------------- | ------------------------------------------------------------------------------- |
-| 1. Lọc dữ liệu          | Bản ghi user-outfit thô      | Subgraph đã lọc                        | User có ít nhất 4 tương tác; lọc cascade outfit/item; bỏ item thiếu ảnh nếu cần |
-| 2. Trích xuất đặc trưng | Ảnh và tiêu đề item          | Vector visual và text                  | ResNet-152 + BERT Chinese, xử lý theo batch                                     |
-| 3. Cache đặc trưng      | Vector vừa trích xuất        | File cache tái sử dụng                 | Lần chạy sau bỏ qua ResNet/BERT nếu cache còn hợp lệ                            |
-| 4. Khởi tạo embedding   | Đặc trưng + seed             | Ma trận item, outfit, user             | Fusion tuyến tính chưa huấn luyện cho item                                      |
-| 5. Xây đồ thị           | Subgraph + trọng số category | Ma trận thưa II, OI, UO                | Cạnh UO đầy đủ lưu trữ, lan truyền dùng tập train                               |
-| 6. Chia tập             | Tương tác và outfit          | Train / val / test + Fill In The Blank | Split per-user cho gợi ý                                                        |
-| 7. Huấn luyện           | Đồ thị, embedding, split     | Mô hình GAT + CompatibilityScorer      | Early stopping theo HR@10, tối đa 50 epoch                                      |
-| 8. Đánh giá             | Tập hold-out                 | Metric xếp hạng và compatibility       | 50 negative/outfit khi đánh giá gợi ý                                           |
+Từ cache và seed, chúng tôi khởi tạo embedding item, outfit và user. Lớp fusion tuyến tính cho item vẫn chưa huấn luyện, như ở Mục 3.2. Tiếp theo, chúng tôi dựng ba ma trận thưa item-item, outfit-item và user-outfit. Trọng số category (Mục 3.3.1) gán cho cạnh item-item. Ma trận user-outfit giữ đủ các tương tác, riêng bước lan truyền lên user chỉ dùng outfit thuộc tập train.
 
+Huấn luyện chạy tối đa 50 epoch với batch size 512. Mỗi outfit dương trong BPR gợi ý có ba outfit âm. Dropout 0,3 ở tầng item, weight decay 10^{-5}, learning rate 0,001. ReduceLROnPlateau giảm learning rate khi Hit Rate@10 trên validation không tăng. Checkpoint chọn theo Hit Rate@10, early stopping với patience 10 epoch. Các lớp GAT và CompatibilityScorer cập nhật theo hàm mục tiêu ở Mục 3.5.
 
-Về lọc người dùng, ngưỡng tối thiểu bốn tương tác giúp mỗi user có đủ lịch sử để chia train/validation/test cục bộ và để lan truyền user có nghĩa. Đồng thời giảm quy mô đồ thị so với corpus đầy đủ.
-
-Về batch và cache, ảnh xử lý theo lô 64, văn bản theo lô 128 trong cấu hình hiện tại. Cache lưu vector đặc trưng sau lần trích xuất đầu. Đây là tối ưu kỹ thuật, không đổi định nghĩa backbone.
-
-Về huấn luyện, batch size 512, mỗi outfit dương có ba outfit âm trong BPR gợi ý, dropout 0,3 trên lớp item, weight decay 10^{-5}, learning rate 0,001 với ReduceLROnPlateau khi HR@10 không cải thiện. Patience early stopping bằng 10 epoch.
-
-Về hướng cải tiến pipeline (chưa triển khai), cắt tỉa láng giềng item-item theo top-K và huấn luyện lớp fusion vẫn là đề xuất tương lai, không nằm trong phạm vi mô tả chi tiết ở đây.
+Sau huấn luyện, chúng tôi đo hiệu năng trên validation và test: Metric xếp hạng cho gợi ý và độ chính xác Fill In The Blank cho compatibility. Với gợi ý, mỗi outfit dương được xếp hạng cùng 50 outfit âm ngẫu nhiên, đã bỏ các outfit user đã có trong train.
 
 ---
 
